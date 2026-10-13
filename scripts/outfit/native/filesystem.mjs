@@ -9,6 +9,8 @@ import { createHash, randomBytes } from 'crypto';
 const ROOT = '/outfit';
 const NS = 'outfit-manager-native-v1';
 const copy = value => JSON.parse(JSON.stringify(value));
+// serde_json may reorder object keys across the native boundary.
+const stableJson = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
 const hash = data => createHash('sha256').update(data).digest('hex');
 const uid = () => randomBytes(16).toString('hex');
 export const constants = { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1, COPYFILE_EXCL: 1 };
@@ -43,7 +45,7 @@ export class NativeFilesystem {
         const result = await this.store.tryGetJson(this.args('control', 'index'));
         if (result.found) {
             const index = result.value;
-            if (index?.version !== 1 || !index.entries || hash(JSON.stringify(index.entries)) !== index.sha256) throw fault('EIO', ROOT, 'directory index is corrupt; refusing empty initialization');
+            if (index?.version !== 1 || !index.entries || hash(stableJson(index.entries)) !== index.sha256) throw fault('EIO', ROOT, 'directory index is corrupt; refusing empty initialization');
             for (const [name, item] of Object.entries(index.entries)) {
                 if (normalize(name) !== name || !['file', 'dir'].includes(item?.kind) ||
                     (item.kind === 'file' && (!/^[a-f0-9]{32}$/.test(item.block) || !/^[a-f0-9]{64}$/.test(item.sha256) || !Number.isSafeInteger(item.size) || item.size < 0))) throw fault('EIO', name, 'invalid index entry');
@@ -61,7 +63,7 @@ export class NativeFilesystem {
     }
     async publish(entries) {
         try {
-            await this.store.setJson({ ...this.args('control', 'index'), value: { version: 1, entries, sha256: hash(JSON.stringify(entries)) } });
+            await this.store.setJson({ ...this.args('control', 'index'), value: { version: 1, entries, sha256: hash(stableJson(entries)) } });
             this.entries = entries;
             this.dirty = false;
         } catch (error) {
