@@ -43,7 +43,7 @@ jobs:
         working-directory: .outfit-build/backend
         run: npm test
       - name: Original frontend tests
-        run: node --test .outfit-build/frontend/tests/*.test.cjs
+        run: node --experimental-vm-modules --test .outfit-build/frontend/tests/*.test.cjs
       - name: Full bundled-backend integration test
         run: node scripts/outfit/smoke.mjs
       - name: Verify Rust workspace boundaries
