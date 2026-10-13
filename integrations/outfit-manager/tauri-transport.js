@@ -11,7 +11,14 @@ export function translateImages(value, from, to, depth = 0) {
     }
     if (Array.isArray(value)) return value.map(item => translateImages(item, from, to, depth + 1));
     if (value && typeof value === 'object') {
-        return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, translateImages(item, from, to, depth + 1)]));
+        const seen = new Set();
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+            // /images/batch-fetch indexes exported images by their source URL.
+            const translatedKey = translateImages(key, from, to, depth + 1);
+            if (seen.has(translatedKey)) throw new Error('Conflicting image keys in Outfit response');
+            seen.add(translatedKey);
+            return [translatedKey, translateImages(item, from, to, depth + 1)];
+        }));
     }
     return value;
 }
@@ -21,11 +28,14 @@ function decodeBody(value) {
     return Uint8Array.from(atob(value), char => char.charCodeAt(0));
 }
 
-export function createOutfitFetch({ originalFetch, invoke, imagePrefix, origin, baseUrl }) {
+export function createOutfitFetch({ originalFetch, invoke, imagePrefix, baseUrl }) {
+    const base = new URL(baseUrl);
     return async function outfitFetch(input, init) {
         const rawUrl = input instanceof Request ? input.url : String(input);
-        const url = new URL(rawUrl, baseUrl);
-        if (url.origin !== origin || !url.pathname.startsWith(SERVER_BASE + '/')) {
+        const url = new URL(rawUrl, base);
+        // Custom schemes may all report origin "null"; compare protocol/host too.
+        if (url.protocol !== base.protocol || url.host !== base.host || url.username || url.password ||
+            !url.pathname.startsWith(SERVER_BASE + '/')) {
             return originalFetch(input, init);
         }
         const request = input instanceof Request ? new Request(input, init) : new Request(url, init);
@@ -60,8 +70,8 @@ export async function installOutfitTransport() {
     const core = window.__TAURI__?.core;
     if (!core?.invoke || !core?.convertFileSrc) throw new Error('The bundled Outfit extension requires its native Tauri backend');
     try {
-        // Fail visibly before upstream initStorage: a native startup failure must
-        // not fall back to an empty IndexedDB wardrobe and overwrite native data.
+        // Stop before upstream initStorage if the native backend failed. Never
+        // fall back to an empty IndexedDB wardrobe and overwrite native data.
         const response = await core.invoke('plugin:outfit|request', {
             request: { method: 'GET', path: SERVER_BASE + '/status', body: null, recoveryRevision: null },
         });
@@ -75,7 +85,6 @@ export async function installOutfitTransport() {
             originalFetch: window.fetch.bind(window),
             invoke: core.invoke,
             imagePrefix,
-            origin: window.location.origin,
             baseUrl: window.location.href,
         });
         window.__OUTFIT_NATIVE_TRANSPORT_INSTALLED__ = true;
