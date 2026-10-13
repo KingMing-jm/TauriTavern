@@ -69,6 +69,20 @@ test('exclusive temporary creation and atomic replacement match writer contract'
     assert.equal(await fs.readFile('/outfit/data/live', 'utf8'), 'new');
     const directory = await fs.open('/outfit/data', 'r'); await directory.sync(); await directory.close();
 });
+test('empty files persist without Blob IO and can be filled after restart', async () => {
+    const { fs, store } = await setup();
+    const { setBlob, getBlob } = store;
+    store.setBlob = async () => { throw new Error('empty Blob writes are forbidden'); };
+    store.getBlob = async () => { throw new Error('empty files have no Blob'); };
+    const handle = await fs.open('/outfit/data/empty', 'wx'); await handle.close();
+    const reopened = await new NativeFilesystem(store).initialize();
+    assert.equal((await reopened.readFile('/outfit/data/empty')).length, 0);
+    assert.equal((await reopened.stat('/outfit/data/empty')).size, 0);
+    store.setBlob = setBlob;
+    store.getBlob = getBlob;
+    await reopened.writeFile('/outfit/data/empty', 'filled');
+    assert.equal(await reopened.readFile('/outfit/data/empty', 'utf8'), 'filled');
+});
 test('concurrent writes do not lose directory entries', async () => {
     const { fs, store } = await setup(); await Promise.all(Array.from({ length: 30 }, (_, i) => fs.writeFile('/outfit/data/f' + i, String(i))));
     const reopened = await new NativeFilesystem(store).initialize(); assert.equal((await reopened.readdir('/outfit/data')).length, 30);

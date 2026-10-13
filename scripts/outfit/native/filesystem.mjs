@@ -127,7 +127,8 @@ export class NativeFilesystem {
         const item = this.entry(name);
         if (item.kind !== 'file') throw fault('EISDIR', name);
         let raw;
-        try { raw = Buffer.from(await (await this.store.getBlob(this.args('blocks', item.block))).arrayBuffer()); }
+        // Empty files are represented by the index; Tauri rejects empty Blobs.
+        try { raw = item.size === 0 ? Buffer.alloc(0) : Buffer.from(await (await this.store.getBlob(this.args('blocks', item.block))).arrayBuffer()); }
         catch (error) { throw fault('EIO', name, `referenced data block unreadable: ${error.message}`); }
         if (raw.length !== item.size || hash(raw) !== item.sha256) throw fault('EIO', name, 'data block checksum mismatch');
         return raw;
@@ -148,7 +149,7 @@ export class NativeFilesystem {
         let raw = Buffer.from(data, encoding || 'utf8');
         if (flag?.startsWith('a') && this.entries[name]) raw = Buffer.concat([await this.readRaw(name), raw]);
         const block = uid();
-        await this.store.setBlob({ ...this.args('blocks', block), data: new Uint8Array(raw) });
+        if (raw.length) await this.store.setBlob({ ...this.args('blocks', block), data: new Uint8Array(raw) });
         const next = copy(this.entries);
         next[name] = { kind: 'file', block, sha256: hash(raw), size: raw.length, mtime: Date.now() };
         await this.publish(next);

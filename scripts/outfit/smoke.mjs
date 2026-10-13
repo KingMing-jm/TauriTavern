@@ -2,9 +2,37 @@ import assert from 'node:assert/strict';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { memoryStore } from './test-store.mjs';
+import { installExtensionStoreApi } from '../../src/tauri/main/api/extension-store.js';
+import { defMeta, defPartition } from '../../.outfit-build/frontend/src/data.js';
 const root = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const bundle = pathToFileURL(path.join(root, 'src/scripts/extensions/outfit-manager/native-backend.js')).href;
-const store = memoryStore();
+// Exercise the production store's validation and binary encoding, with only
+// native command IO replaced. A permissive Blob mock hid empty staging files.
+const disk = memoryStore();
+const host = { __TAURITAVERN__: { api: {} } };
+const previousWindow = globalThis.window;
+globalThis.window = host;
+try {
+    installExtensionStoreApi({ async safeInvoke(command, args) {
+        switch (command) {
+            case 'try_get_extension_store_json': return disk.tryGetJson(args);
+            case 'set_extension_store_json': return disk.setJson(args);
+            case 'list_extension_store_keys': return disk.listKeys(args);
+            case 'list_extension_store_blob_keys': return disk.listBlobKeys(args);
+            case 'set_extension_store_blob': return disk.setBlob({ ...args, data: Buffer.from(args.dataBase64, 'base64') });
+            case 'get_extension_store_blob': return {
+                content_base64: Buffer.from(await (await disk.getBlob(args)).arrayBuffer()).toString('base64'),
+                mime_type: 'application/octet-stream',
+            };
+            case 'delete_extension_store_blob': return disk.deleteBlob(args);
+            default: throw new Error(`Unexpected native store command: ${command}`);
+        }
+    } });
+} finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+}
+const store = host.__TAURITAVERN__.api.extension.store;
 let generation = 0;
 async function start() { return (await import(bundle + '?generation=' + ++generation)).createNativeRuntime(store); }
 let runtime = await start();
@@ -19,6 +47,8 @@ async function json(method, route, body, revision) {
 let status = await json('GET', '/status');
 assert.equal(status.pluginVersion, '2.0.3');
 assert.equal(status.storageState, 'NEW_INSTALL');
+// Match the frontend's first upload into an empty v2 backend.
+await json('PUT', '/partitions/batch', { meta: defMeta(), partitions: { 'user:__default__': defPartition() } });
 const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC9sAAAAASUVORK5CYII=';
 await json('PUT', '/data', { outfits: [{ id: 'outfit1', name: 'original', imageData: pixel }], categories: [], activeIds: [], accessories: [], accCategories: [] });
 status = await json('GET', '/status');
@@ -59,4 +89,4 @@ await runtime.filesystem.writeFile('/outfit/data/part_user____default__.json', '
 runtime = await start();
 assert.equal((await request('GET', '/data')).status, 409);
 assert.equal((await request('PUT', '/data', {})).status, 409);
-console.log('PASS: original backend on native filesystem: persistence, images, full-data conversion, batch rejection, snapshot restore, stale-client guard, GC and corrupt-data write lock.');
+console.log('PASS: original backend through TT store API: first partition upload, persistence, images, full-data conversion, batch rejection, snapshot restore, stale-client guard, GC and corrupt-data write lock.');
