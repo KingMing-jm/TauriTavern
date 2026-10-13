@@ -60,13 +60,13 @@ jobs:
         run: |
           set -euo pipefail
           npm install --prefix "$RUNNER_TEMP/outfit-test-deps" --ignore-scripts --no-audit --no-fund --save-exact express@4.22.3
-          echo "NODE_PATH=$RUNNER_TEMP/outfit-test-deps/node_modules" >> "$GITHUB_ENV"
+          ln -s "$RUNNER_TEMP/outfit-test-deps/node_modules" .outfit-audit/backend/node_modules
       - name: Test original backend storage and recovery
         working-directory: .outfit-audit/backend
         run: npm test
       - name: Test original frontend contracts
         if: ${{ !cancelled() }}
-        run: node --test .outfit-audit/frontend/tests/*.test.cjs
+        run: node --experimental-vm-modules --test .outfit-audit/frontend/tests/*.test.cjs
       - name: Report native integration surface
         if: ${{ !cancelled() }}
         shell: bash
