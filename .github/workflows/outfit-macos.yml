@@ -1,0 +1,71 @@
+name: Outfit Manager - macOS Apple Silicon
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outfit-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+      APPLE_SIGNING_IDENTITY: '-'
+      TAURITAVERN_BUILD_BRANCH: outfit-bundled
+      TAURITAVERN_BUILD_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare pinned frontend, backend and bundled Node runtime
+        run: node scripts/outfit/prepare.mjs
+      - name: Test upstream storage and native transport
+        run: |
+          node --test scripts/outfit/prepare.test.mjs
+          node scripts/outfit/smoke.mjs
+          node scripts/check-rust-crate-boundaries.mjs
+      - name: Build isolated Apple Silicon application
+        run: >-
+          node scripts/tauri-app.mjs --prepare-frontend build
+          --target aarch64-apple-darwin --bundles dmg
+          --config "$PWD/.outfit-build/tauri.outfit.conf.json"
+      - name: Verify packaged resources and executable architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/TauriTavern Outfit.app"
+          test -d "$app"
+          test -f "$app/Contents/Resources/outfit-runtime/bin/node"
+          test -f "$app/Contents/Resources/outfit-runtime/launcher.cjs"
+          test -f "$app/Contents/Resources/outfit-runtime/server/index.js"
+          test -f "$app/Contents/Resources/outfit-runtime/server/recovery.js"
+          test -f "$app/Contents/Resources/outfit-runtime/server/storage-safety.js"
+          file "$app/Contents/Resources/outfit-runtime/bin/node" | grep arm64
+          codesign --verify --deep --strict "$app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TauriTavern-Outfit-macOS-arm64
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            .outfit-build/BUILD-MANIFEST.json
+            .outfit-build/runtime/package-lock.json
