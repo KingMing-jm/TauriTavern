@@ -36,10 +36,12 @@ jobs:
       - name: Prepare pinned plugins and browser-compatible backend
         run: node scripts/outfit/prepare.mjs
       - name: Install Node-only dependencies for upstream test fixtures
-        run: npm install --prefix "$RUNNER_TEMP/outfit-test-deps" --ignore-scripts --no-audit --no-fund express@4.21.2
+        run: |
+          npm install --prefix "$RUNNER_TEMP/outfit-test-deps" --ignore-scripts --no-audit --no-fund express@4.21.2
+          ln -s "$RUNNER_TEMP/outfit-test-deps/node_modules" .outfit-build/backend/node_modules
       - name: Original server test suite
         working-directory: .outfit-build/backend
-        run: NODE_PATH="$RUNNER_TEMP/outfit-test-deps/node_modules" npm test
+        run: npm test
       - name: Original frontend tests
         run: node --test .outfit-build/frontend/tests/*.test.cjs
       - name: Full bundled-backend integration test
@@ -47,6 +49,7 @@ jobs:
       - name: Verify Rust workspace boundaries
         run: node scripts/check-rust-crate-boundaries.mjs
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Outfit-Integration-Sources
           if-no-files-found: error
@@ -92,7 +95,8 @@ jobs:
           app="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/TauriTavern Outfit.app"
           test -d "$app"
           codesign --verify --deep --strict "$app"
-          file "$app/Contents/MacOS/tauritavern" | grep arm64
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
+          file "$app/Contents/MacOS/$executable" | grep arm64
       - uses: actions/upload-artifact@v4
         with:
           name: TauriTavern-Outfit-macOS-arm64
