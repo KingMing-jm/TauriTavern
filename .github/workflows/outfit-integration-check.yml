@@ -1,0 +1,78 @@
+name: Outfit integration checks
+
+on:
+  push:
+    branches: [feat/outfit-manager-bundled]
+    paths:
+      - integrations/outfit-manager/**
+      - scripts/outfit/**
+      - .github/workflows/outfit-*.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outfit-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upstream-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['18', '22']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Read pinned source revisions
+        id: pins
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const p = JSON.parse(fs.readFileSync('integrations/outfit-manager/targets.json', 'utf8'));
+          for (const name of ['frontend', 'backend']) {
+            const source = p.upstream[name];
+            if (!/^wenshui012\/Outfit-Manager(?:-Server)?$/.test(source.repository) || !/^[a-f0-9]{40}$/.test(source.revision)) throw new Error('Invalid source pin');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}_repo=${source.repository}\n${name}_sha=${source.revision}\n`);
+          }
+          NODE
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pins.outputs.frontend_repo }}
+          ref: ${{ steps.pins.outputs.frontend_sha }}
+          path: .outfit-audit/frontend
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pins.outputs.backend_repo }}
+          ref: ${{ steps.pins.outputs.backend_sha }}
+          path: .outfit-audit/backend
+          persist-credentials: false
+      - name: Test original backend storage and recovery
+        working-directory: .outfit-audit/backend
+        run: npm test
+      - name: Test original frontend contracts
+        run: node --test .outfit-audit/frontend/tests/*.test.cjs
+      - name: Report native integration surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const dir = '.outfit-audit/backend/';
+          for (const file of ['index.js', 'recovery.js', 'storage-safety.js']) {
+            const code = fs.readFileSync(dir + file, 'utf8');
+            const modules = [...new Set([...code.matchAll(/require\(['"]([^'"]+)['"]\)/g)].map(x => x[1]))];
+            const calls = [...new Set([...code.matchAll(/\b(?:fs|fsp|defaultFsp|crypto|path|Buffer|process)\.[A-Za-z0-9_]+/g)].map(x => x[0]))].sort();
+            console.log(JSON.stringify({file, modules, calls}));
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+            'Pinned upstream tests only. Passing these tests does NOT certify the Tauri integration or create an installer. Android target: arm64-v8a.\n');
+          NODE
