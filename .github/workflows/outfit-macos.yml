@@ -35,9 +35,11 @@ jobs:
         run: node --test scripts/outfit/*.test.mjs
       - name: Prepare pinned plugins and browser-compatible backend
         run: node scripts/outfit/prepare.mjs
+      - name: Install Node-only dependencies for upstream test fixtures
+        run: npm install --prefix "$RUNNER_TEMP/outfit-test-deps" --ignore-scripts --no-audit --no-fund express@4.21.2
       - name: Original server test suite
         working-directory: .outfit-build/backend
-        run: npm test
+        run: NODE_PATH="$RUNNER_TEMP/outfit-test-deps/node_modules" npm test
       - name: Original frontend tests
         run: node --test .outfit-build/frontend/tests/*.test.cjs
       - name: Full bundled-backend integration test
