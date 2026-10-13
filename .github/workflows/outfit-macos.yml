@@ -1,24 +1,66 @@
-name: Outfit Manager - macOS Apple Silicon
+name: Outfit Bundles - macOS and Android ARM64
 
 on:
   workflow_dispatch:
+  push:
+    branches: [feat/outfit-manager-bundled]
+    paths:
+      - scripts/outfit/**
+      - .github/workflows/outfit-macos.yml
 
 permissions:
   contents: read
 
 concurrency:
-  group: outfit-macos-${{ github.ref }}
-  cancel-in-progress: false
+  group: outfit-bundles-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  TAURITAVERN_BUILD_BRANCH: outfit-bundled
+  TAURITAVERN_BUILD_REVISION: ${{ github.sha }}
 
 jobs:
-  bundle:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Native filesystem and transport tests
+        run: node --test scripts/outfit/*.test.mjs
+      - name: Prepare pinned plugins and browser-compatible backend
+        run: node scripts/outfit/prepare.mjs
+      - name: Original server test suite
+        working-directory: .outfit-build/backend
+        run: npm test
+      - name: Original frontend tests
+        run: node --test .outfit-build/frontend/tests/*.test.cjs
+      - name: Full bundled-backend integration test
+        run: node scripts/outfit/smoke.mjs
+      - name: Verify Rust workspace boundaries
+        run: node scripts/check-rust-crate-boundaries.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Outfit-Integration-Sources
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: true
+          path: |
+            src/scripts/extensions/outfit-manager/
+            .outfit-build/BUILD-MANIFEST.json
+            .outfit-build/tooling/package-lock.json
+
+  macos:
+    needs: contracts
     runs-on: macos-latest
     timeout-minutes: 90
     env:
-      CARGO_TERM_COLOR: always
       APPLE_SIGNING_IDENTITY: '-'
-      TAURITAVERN_BUILD_BRANCH: outfit-bundled
-      TAURITAVERN_BUILD_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,7 +68,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
       - uses: pnpm/setup@v2
@@ -35,37 +77,134 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - name: Prepare pinned frontend, backend and bundled Node runtime
-        run: node scripts/outfit/prepare.mjs
-      - name: Test upstream storage and native transport
-        run: |
-          node --test scripts/outfit/prepare.test.mjs
-          node scripts/outfit/smoke.mjs
-          node scripts/check-rust-crate-boundaries.mjs
-      - name: Build isolated Apple Silicon application
+      - run: node scripts/outfit/prepare.mjs
+      - name: Build Apple Silicon DMG
         run: >-
           node scripts/tauri-app.mjs --prepare-frontend build
           --target aarch64-apple-darwin --bundles dmg
-          --config "$PWD/.outfit-build/tauri.outfit.conf.json"
-      - name: Verify packaged resources and executable architecture
+          --config "$PWD/.outfit-build/tauri.outfit.macos.conf.json"
+      - name: Verify application architecture and signature
         shell: bash
         run: |
           set -euo pipefail
           app="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/TauriTavern Outfit.app"
           test -d "$app"
-          test -f "$app/Contents/Resources/outfit-runtime/bin/node"
-          test -f "$app/Contents/Resources/outfit-runtime/launcher.cjs"
-          test -f "$app/Contents/Resources/outfit-runtime/server/index.js"
-          test -f "$app/Contents/Resources/outfit-runtime/server/recovery.js"
-          test -f "$app/Contents/Resources/outfit-runtime/server/storage-safety.js"
-          file "$app/Contents/Resources/outfit-runtime/bin/node" | grep arm64
           codesign --verify --deep --strict "$app"
+          file "$app/Contents/MacOS/tauritavern" | grep arm64
       - uses: actions/upload-artifact@v4
         with:
           name: TauriTavern-Outfit-macOS-arm64
           if-no-files-found: error
           retention-days: 14
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+
+  android:
+    needs: contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Android host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r29
+          link-to-sdk: true
+      - name: Configure ARM64 compiler and Android SDK
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+          toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          {
+            echo "NDK_HOME=$ANDROID_NDK_HOME"
+            echo "AR_aarch64_linux_android=$toolchain/llvm-ar"
+            echo "CC_aarch64_linux_android=$toolchain/aarch64-linux-android26-clang"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$sysroot"
+          } >> "$GITHUB_ENV"
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/outfit/prepare.mjs
+      - name: Configure APK signing
+        env:
+          OUTFIT_KEYSTORE: ${{ secrets.OUTFIT_ANDROID_KEYSTORE_BASE64 }}
+          OUTFIT_KEY_ALIAS: ${{ secrets.OUTFIT_ANDROID_KEY_ALIAS }}
+          OUTFIT_KEY_PASSWORD: ${{ secrets.OUTFIT_ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          keystore="$RUNNER_TEMP/outfit-signing.jks"
+          if [[ -n "$OUTFIT_KEYSTORE" ]]; then
+            : "${OUTFIT_KEY_ALIAS:?Missing OUTFIT_ANDROID_KEY_ALIAS}"
+            : "${OUTFIT_KEY_PASSWORD:?Missing OUTFIT_ANDROID_KEY_PASSWORD}"
+            printf '%s' "$OUTFIT_KEYSTORE" | base64 --decode > "$keystore"
+            signing_note='Signed with repository-owned Outfit key.'
+          else
+            OUTFIT_KEY_ALIAS=outfit-preview
+            OUTFIT_KEY_PASSWORD=$(openssl rand -hex 24)
+            export OUTFIT_KEY_PASSWORD
+            echo "::add-mask::$OUTFIT_KEY_PASSWORD"
+            keytool -genkeypair -noprompt -keystore "$keystore" -storetype JKS \
+              -alias "$OUTFIT_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 3650 \
+              -storepass:env OUTFIT_KEY_PASSWORD -keypass:env OUTFIT_KEY_PASSWORD \
+              -dname 'CN=TauriTavern Outfit Preview'
+            signing_note='PREVIEW ONLY: temporary per-run signing key. Later builds cannot update this install unless the same signing key is configured. Export data before changing preview installations. No private signing key is published.'
+            echo "::warning::$signing_note"
+          fi
+          prop=src-tauri/crates/tauritavern/gen/android/keystore.properties
+          printf 'keyAlias=%s\npassword=%s\nstoreFile=%s\n' "$OUTFIT_KEY_ALIAS" "$OUTFIT_KEY_PASSWORD" "$keystore" > "$prop"
+          printf '%s\n' "$signing_note" > .outfit-build/ANDROID-SIGNING.txt
+      - name: Build Android arm64-v8a APK
+        run: >-
+          node scripts/tauri-app.mjs --prepare-frontend android build
+          --apk --target aarch64
+          --config "$PWD/.outfit-build/tauri.outfit.android.conf.json"
+      - name: Verify signed APK, ABI and independent package name
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .outfit-build/artifacts
+          mapfile -t apks < <(find src-tauri/crates/tauritavern/gen/android/app/build/outputs/apk -type f -name '*.apk' ! -name '*unsigned*')
+          test "${#apks[@]}" -gt 0
+          for apk in "${apks[@]}"; do
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$apk"
+            info=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk")
+            grep -q "package: name='com.kingming.tauritavern.outfit'" <<< "$info"
+            grep -q "native-code: 'arm64-v8a'" <<< "$info"
+            ! grep '^native-code:' <<< "$info" | grep -Eq "armeabi-v7a|x86"
+            cp "$apk" ".outfit-build/artifacts/TauriTavern-Outfit-arm64-v8a-$(basename "$apk")"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TauriTavern-Outfit-Android-arm64-v8a
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: true
           path: |
-            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-            .outfit-build/BUILD-MANIFEST.json
-            .outfit-build/runtime/package-lock.json
+            .outfit-build/artifacts/*.apk
+            .outfit-build/ANDROID-SIGNING.txt
