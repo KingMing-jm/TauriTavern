@@ -82,5 +82,5 @@ jobs:
             console.log(JSON.stringify({file, modules, calls}));
           }
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
-            'Pinned upstream tests only. Passing these tests does NOT certify the Tauri integration or create an installer. Android target: arm64-v8a.\n');
+            'Pinned upstream tests only. Passing these tests does NOT certify the Tauri integration or create an installer. Packaging targets are derived from upstream release workflows.\n');
           NODE

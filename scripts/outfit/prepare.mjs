@@ -15,7 +15,7 @@ export const SOURCES = Object.freeze({
     backend: { repo: 'wenshui012/Outfit-Manager-Server', sha: 'e13afe64dba250e92b62dd71932774ebbde00ae6' },
 });
 function run(command, args, cwd = root) {
-    const result = spawnSync(command, args, { cwd, stdio: 'inherit', shell: false });
+    const result = spawnSync(command, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' && command === 'npm' });
     if (result.error || result.status !== 0) throw result.error || new Error(`${command} exited with ${result.status}`);
 }
 function gitOutput(args, cwd) {
@@ -87,12 +87,15 @@ async function main() {
     const gradle = path.join(root, 'src-tauri/crates/tauritavern/gen/android/app/build.gradle.kts');
     // Keep Kotlin/JNI namespace unchanged; isolate only the installed application ID.
     await replaceOnce(gradle, 'applicationId = "com.tauritavern.client"', 'applicationId = "com.kingming.tauritavern.outfit"');
-    await writeFile(path.join(build, 'tauri.outfit.macos.conf.json'), JSON.stringify({ productName: 'TauriTavern Outfit', identifier: 'com.kingming.tauritavern.outfit' }, null, 2));
+    await writeFile(path.join(build, 'tauri.outfit.desktop.conf.json'), JSON.stringify({ productName: 'TauriTavern Outfit', identifier: 'com.kingming.tauritavern.outfit' }, null, 2));
     await writeFile(path.join(build, 'tauri.outfit.android.conf.json'), JSON.stringify({ productName: 'TauriTavern Outfit' }, null, 2));
-    const result = { sources: SOURCES, backendSha256: provenance, dependencies: dependencyVersions, backendMode: 'original JavaScript backend + native atomic filesystem bridge; no Node runtime', targets: ['aarch64-apple-darwin', 'aarch64-linux-android'], androidApplicationId: 'com.kingming.tauritavern.outfit' };
+    await writeFile(path.join(build, 'tauri.outfit.ios.conf.json'), JSON.stringify({ identifier: 'com.kingming.tauritavern.outfit' }, null, 2));
+    await replaceOnce(path.join(root, 'src-tauri/crates/tauritavern/gen/apple/project.yml'), 'PRODUCT_BUNDLE_IDENTIFIER: com.tauritavern.client', 'PRODUCT_BUNDLE_IDENTIFIER: com.kingming.tauritavern.outfit');
+    const { releaseTargets } = await import('./release-workflow.mjs');
+    const result = { sources: SOURCES, backendSha256: provenance, dependencies: dependencyVersions, backendMode: 'original JavaScript backend + native atomic filesystem bridge; no Node runtime', targets: await releaseTargets(), androidApplicationId: 'com.kingming.tauritavern.outfit' };
     await writeFile(path.join(build, 'BUILD-MANIFEST.json'), JSON.stringify(result, null, 2));
     await writeFile(path.join(extension, 'BUILD-MANIFEST.json'), JSON.stringify(result, null, 2));
     for (const file of ['index.js', 'upstream.js', 'native-backend.js', 'src/db.js', 'server-source/index.js', 'server-source/recovery.js', 'server-source/storage-safety.js']) await access(path.join(extension, file));
-    console.log('Prepared pinned frontend and original backend for macOS and Android.');
+    console.log('Prepared pinned frontend and original backend for all upstream release targets.');
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

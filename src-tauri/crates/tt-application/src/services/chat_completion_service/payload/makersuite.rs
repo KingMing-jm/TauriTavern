@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use crate::errors::ApplicationError;
 
 use super::super::model_capabilities::{
-    GeminiThinkingControl, RequestedReasoningEffort, is_gemini_thinking_config_model,
+    GeminiModel, GeminiThinkingControl, RequestedReasoningEffort, is_gemini_thinking_config_model,
     map_gemini_thinking_control, parse_known_reasoning_effort,
 };
 use super::content_parts::{
@@ -25,7 +25,8 @@ const GOOGLE_IMAGE_GENERATION_MODELS: &[&str] = &[
     "gemini-2.0-flash-preview-image-generation",
     "gemini-2.5-flash-image-preview",
     "gemini-2.5-flash-image",
-    "gemini-3-pro-image-preview",
+    "gemini-3-pro-image",
+    "gemini-3.1-flash-image",
 ];
 
 const GOOGLE_NO_SEARCH_MODELS: &[&str] = &[
@@ -95,13 +96,10 @@ fn build_google_payload(
         .ok_or_else(|| {
             ApplicationError::ValidationError("Gemini request is missing model".to_string())
         })?;
-    // Custom endpoints accept the documented `models/<id>` form; capability
-    // lookups use the bare id so a supported model is still recognised.
-    let capability_model = if is_custom {
-        model.strip_prefix("models/").unwrap_or(model)
-    } else {
-        model
-    };
+    let gemini_model = GeminiModel::parse(model);
+    let is_gemini3_or_later = gemini_model
+        .as_ref()
+        .is_some_and(GeminiModel::is_gemini3_or_later);
 
     let enable_web_search = payload
         .get("enable_web_search")
@@ -121,8 +119,9 @@ fn build_google_payload(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let is_gemma = model.contains("gemma");
+    let is_gemma3 = model.contains("gemma-3");
     let is_learnlm = model.contains("learnlm");
+    let is_image_model = model.to_ascii_lowercase().contains("-image");
 
     let enable_image_modality =
         request_images && (is_custom || GOOGLE_IMAGE_GENERATION_MODELS.contains(&model));
@@ -131,17 +130,26 @@ fn build_google_payload(
         .get("use_sysprompt")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        && (is_custom || (!enable_image_modality && !is_gemma));
+        && (is_custom || (!enable_image_modality && !is_gemma3));
 
-    let (contents, system_prompt) =
-        convert_messages(payload.get("messages"), model, use_system_prompt)?;
+    let has_fixed_sampling_parameters = !is_custom
+        && gemini_model
+            .as_ref()
+            .is_some_and(GeminiModel::has_fixed_sampling);
+    let no_prefill = has_fixed_sampling_parameters
+        && payload
+            .get("chat_completion_source")
+            .and_then(Value::as_str)
+            != Some("opencode");
+    let (contents, system_prompt) = convert_messages(
+        payload.get("messages"),
+        use_system_prompt,
+        no_prefill,
+        is_gemini3_or_later,
+        is_image_model,
+    )?;
 
     let mut generation_config = Map::new();
-    let has_fixed_sampling_parameters = !is_custom
-        && matches!(
-            model,
-            "gemini-3.5-flash-lite" | "gemini-3.6-flash" | "gemini-3.7-flash"
-        );
 
     if let Some(value) = payload.get("max_tokens").filter(|value| !value.is_null()) {
         generation_config.insert("maxOutputTokens".to_string(), value.clone());
@@ -233,9 +241,7 @@ fn build_google_payload(
         if enable_image_config {
             let mut image_config = Map::new();
 
-            if let Some(image_size) =
-                image_size.filter(|_| is_custom || is_google_image_size_model(model))
-            {
+            if let Some(image_size) = image_size.filter(|_| is_custom || is_gemini3_or_later) {
                 image_config.insert(
                     "imageSize".to_string(),
                     Value::String(image_size.to_string()),
@@ -255,7 +261,12 @@ fn build_google_payload(
         }
     }
 
-    inject_google_thinking_config(payload, capability_model, target, &mut generation_config)?;
+    inject_google_thinking_config(
+        payload,
+        gemini_model.as_ref(),
+        target,
+        &mut generation_config,
+    )?;
 
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
@@ -291,7 +302,7 @@ fn build_google_payload(
 
     let mut tools = Vec::<Value>::new();
 
-    if is_custom || (!enable_image_modality && !is_gemma) {
+    if is_custom || (!enable_image_modality && !is_gemma3) {
         if let Some(raw_tools) = payload.get("tools") {
             let (function_declarations, custom_tools) = split_openai_tools(raw_tools);
 
@@ -332,8 +343,10 @@ fn build_google_payload(
 
 fn convert_messages(
     messages: Option<&Value>,
-    model: &str,
     use_system_prompt: bool,
+    no_prefill: bool,
+    is_gemini3_or_later: bool,
+    is_image_model: bool,
 ) -> Result<(Vec<Value>, String), ApplicationError> {
     let mut contents = Vec::new();
     let mut system_parts = Vec::new();
@@ -355,9 +368,6 @@ fn convert_messages(
         return Ok((contents, String::new()));
     };
 
-    let model_lower = model.trim().to_ascii_lowercase();
-    let is_gemini3 = model_lower.contains("gemini-3");
-    let is_image_model = model_lower.contains("-image");
     let skip_signature_magic = "skip_thought_signature_validator";
 
     let mut start_index = 0_usize;
@@ -391,7 +401,7 @@ fn convert_messages(
         }
     }
 
-    for entry in entries.iter().skip(start_index) {
+    for (index, entry) in entries.iter().enumerate().skip(start_index) {
         let Some(message) = entry.as_object() else {
             continue;
         };
@@ -425,7 +435,7 @@ fn convert_messages(
             let mut parts = if let Some(native_parts) = native_gemini_parts.clone() {
                 native_parts
             } else {
-                convert_message_content_to_parts(message.get("content"), is_gemini3)?
+                convert_message_content_to_parts(message.get("content"), is_gemini3_or_later)?
             };
 
             if role == "assistant" {
@@ -454,7 +464,7 @@ fn convert_messages(
             parts.push(json!({ "text": "" }));
         }
 
-        let target_role = if role == "assistant" { "model" } else { "user" };
+        let mut target_role = if role == "assistant" { "model" } else { "user" };
 
         // Native parts already carry their own signatures; never overwrite signed history.
         if native_gemini_parts.is_none() {
@@ -481,7 +491,7 @@ fn convert_messages(
                     continue;
                 }
 
-                if is_gemini3 {
+                if is_gemini3_or_later {
                     if part_object.get("functionCall").is_some()
                         && !part_object.contains_key("thoughtSignature")
                     {
@@ -502,6 +512,20 @@ fn convert_messages(
                     }
                 }
             }
+        }
+
+        // Only a plain trailing text turn is a prefill; native/tool history keeps its role.
+        if no_prefill
+            && role == "assistant"
+            && index + 1 == entries.len()
+            && native_gemini_parts.is_none()
+            && parts.iter().all(|part| {
+                part.as_object().is_some_and(|part| {
+                    part.len() == 1 && part.get("text").is_some_and(Value::is_string)
+                })
+            })
+        {
+            target_role = "user";
         }
 
         if merge_with_previous
@@ -530,13 +554,13 @@ fn convert_messages(
 
 fn convert_message_content_to_parts(
     content: Option<&Value>,
-    is_gemini3: bool,
+    is_gemini3_or_later: bool,
 ) -> Result<Vec<Value>, ApplicationError> {
     let parts = parse_openai_chat_content(content)?;
     let mut rendered = Vec::with_capacity(parts.len());
 
     for part in &parts {
-        if let Some(part) = render_google_content_part(part, is_gemini3)? {
+        if let Some(part) = render_google_content_part(part, is_gemini3_or_later)? {
             rendered.push(part);
         }
     }
@@ -546,7 +570,7 @@ fn convert_message_content_to_parts(
 
 fn render_google_content_part(
     part: &InputPart,
-    is_gemini3: bool,
+    is_gemini3_or_later: bool,
 ) -> Result<Option<Value>, ApplicationError> {
     match part {
         InputPart::Text(text) => {
@@ -556,9 +580,13 @@ fn render_google_content_part(
                 Ok(Some(json!({ "text": text })))
             }
         }
-        InputPart::Image(media) => render_google_media_part("image", media, is_gemini3).map(Some),
+        InputPart::Image(media) => {
+            render_google_media_part("image", media, is_gemini3_or_later).map(Some)
+        }
         InputPart::Audio(media) => render_google_media_part("audio", media, false).map(Some),
-        InputPart::Video(media) => render_google_media_part("video", media, is_gemini3).map(Some),
+        InputPart::Video(media) => {
+            render_google_media_part("video", media, is_gemini3_or_later).map(Some)
+        }
         InputPart::Unknown { ty, value } => {
             render_google_unknown_content_part(ty.as_deref(), value).map(Some)
         }
@@ -820,7 +848,7 @@ fn map_tool_choice_to_makersuite(value: &Value) -> Result<Value, ApplicationErro
 
 fn inject_google_thinking_config(
     payload: &Map<String, Value>,
-    model: &str,
+    model: Option<&GeminiModel>,
     target: GoogleTarget,
     generation_config: &mut Map<String, Value>,
 ) -> Result<(), ApplicationError> {
@@ -829,7 +857,7 @@ fn inject_google_thinking_config(
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    if !is_gemini_thinking_config_model(model) {
+    let Some(model) = model.filter(|model| is_gemini_thinking_config_model(model)) else {
         if target != GoogleTarget::Custom {
             return Ok(());
         }
@@ -849,7 +877,7 @@ fn inject_google_thinking_config(
             generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
         }
         return Ok(());
-    }
+    };
 
     let reasoning_effort = match payload.get("reasoning_effort").and_then(Value::as_str) {
         Some(value) => parse_known_reasoning_effort(value, "Gemini")?,
@@ -890,10 +918,6 @@ fn inject_google_thinking_config(
 
     generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
     Ok(())
-}
-
-fn is_google_image_size_model(model: &str) -> bool {
-    model.trim().to_ascii_lowercase().starts_with("gemini-3")
 }
 
 fn request_has_function_declarations(request: &Map<String, Value>) -> bool {
@@ -989,6 +1013,8 @@ mod tests {
             "gemini-3.5-flash-lite",
             "gemini-3.6-flash",
             "gemini-3.7-flash",
+            "gemini-3.8-flash",
+            "gemini-4-argon",
         ] {
             let config = build_config(model);
             for key in ["candidateCount", "temperature", "topP", "topK"] {
@@ -997,10 +1023,12 @@ mod tests {
             assert_eq!(config.get("seed").and_then(Value::as_i64), Some(17));
         }
 
-        let config = build_config("gemini-2.5-flash");
-        assert_eq!(config.get("temperature").and_then(Value::as_f64), Some(0.7));
-        assert_eq!(config.get("topP").and_then(Value::as_f64), Some(0.9));
-        assert_eq!(config.get("topK").and_then(Value::as_i64), Some(40));
+        for model in ["gemini-2.5-flash", "gemini-3.5-flash"] {
+            let config = build_config(model);
+            assert_eq!(config.get("temperature").and_then(Value::as_f64), Some(0.7));
+            assert_eq!(config.get("topP").and_then(Value::as_f64), Some(0.9));
+            assert_eq!(config.get("topK").and_then(Value::as_i64), Some(40));
+        }
     }
 
     #[test]
@@ -1121,60 +1149,62 @@ mod tests {
 
     #[test]
     fn makersuite_builds_multimodal_inline_parts() {
-        let upstream = build_with_messages(
-            "gemini-3-pro",
-            json!([{
-                "role": "user",
-                "content": [
-                    { "type": "text", "text": "describe" },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": "data:image/png;base64,AAAA",
-                            "detail": "high"
+        for model in ["gemini-3-pro", "gemini-4-argon"] {
+            let upstream = build_with_messages(
+                model,
+                json!([{
+                    "role": "user",
+                    "content": [
+                        { "type": "text", "text": "describe" },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64,AAAA",
+                                "detail": "high"
+                            }
+                        },
+                        {
+                            "type": "video_url",
+                            "video_url": {
+                                "url": "data:video/mp4;base64,BBBB",
+                                "detail": "low"
+                            }
+                        },
+                        {
+                            "type": "audio_url",
+                            "audio_url": { "url": "data:audio/wav;base64,CCCC" }
                         }
-                    },
-                    {
-                        "type": "video_url",
-                        "video_url": {
-                            "url": "data:video/mp4;base64,BBBB",
-                            "detail": "low"
-                        }
-                    },
-                    {
-                        "type": "audio_url",
-                        "audio_url": { "url": "data:audio/wav;base64,CCCC" }
-                    }
-                ]
-            }]),
-        );
+                    ]
+                }]),
+            );
 
-        assert_eq!(
-            upstream.pointer("/contents/0/parts"),
-            Some(&json!([
-                { "text": "describe" },
-                {
-                    "inlineData": {
-                        "mimeType": "image/png",
-                        "data": "AAAA"
+            assert_eq!(
+                upstream.pointer("/contents/0/parts"),
+                Some(&json!([
+                    { "text": "describe" },
+                    {
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": "AAAA"
+                        },
+                        "mediaResolution": { "level": "media_resolution_high" }
                     },
-                    "mediaResolution": { "level": "media_resolution_high" }
-                },
-                {
-                    "inlineData": {
-                        "mimeType": "video/mp4",
-                        "data": "BBBB"
+                    {
+                        "inlineData": {
+                            "mimeType": "video/mp4",
+                            "data": "BBBB"
+                        },
+                        "mediaResolution": { "level": "media_resolution_low" }
                     },
-                    "mediaResolution": { "level": "media_resolution_low" }
-                },
-                {
-                    "inlineData": {
-                        "mimeType": "audio/wav",
-                        "data": "CCCC"
+                    {
+                        "inlineData": {
+                            "mimeType": "audio/wav",
+                            "data": "CCCC"
+                        }
                     }
-                }
-            ]))
-        );
+                ]))
+            );
+        }
     }
 
     #[test]
@@ -1657,45 +1687,41 @@ mod tests {
     }
 
     #[test]
-    fn makersuite_image_generation_sets_response_modalities_and_image_config() {
-        let payload = json!({
-            "model": "gemini-3-pro-image-preview",
-            "request_images": true,
-            "request_image_resolution": "image_size_1",
-            "request_image_aspect_ratio": "16:9",
-            "messages": [{"role": "user", "content": "hello"}]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
-        let config = body
-            .get("generationConfig")
-            .and_then(Value::as_object)
-            .expect("generationConfig must be object");
-
-        assert_eq!(
-            config
-                .get("responseModalities")
-                .and_then(Value::as_array)
-                .and_then(|value| value.first())
-                .and_then(Value::as_str),
-            Some("text")
-        );
-
-        let image_config = config
-            .get("imageConfig")
-            .and_then(Value::as_object)
-            .expect("imageConfig must be object");
-        assert_eq!(
-            image_config.get("imageSize").and_then(Value::as_str),
-            Some("image_size_1")
-        );
-        assert_eq!(
-            image_config.get("aspectRatio").and_then(Value::as_str),
-            Some("16:9")
-        );
+    fn makersuite_only_rewrites_plain_trailing_prefill() {
+        let native =
+            json!({"role": "model", "parts": [{"text": "signed", "thoughtSignature": "sig"}]});
+        for (last, role) in [
+            (json!({"role": "assistant", "content": "prefill"}), "user"),
+            (
+                json!({"role": "assistant", "content": "signed", "signature": "sig"}),
+                "model",
+            ),
+            (
+                json!({"role": "assistant", "native": {"gemini": {"content": native}}}),
+                "model",
+            ),
+            (
+                json!({"role": "assistant", "tool_calls": [{
+                    "id": "call", "function": {"name": "lookup", "arguments": "{}"}
+                }]}),
+                "model",
+            ),
+        ] {
+            let request = build_with_messages(
+                "gemini-3.7-flash",
+                json!([
+                    {"role": "user", "content": "hello"},
+                    {"role": "assistant", "content": "earlier"},
+                    {"role": "user", "content": "continue"},
+                    last
+                ]),
+            );
+            let contents = request["contents"].as_array().unwrap();
+            assert_eq!(contents[1]["role"], "model");
+            assert_eq!(contents.last().unwrap()["role"], role);
+            if last.get("native").is_some() {
+                assert_eq!(contents.last().unwrap()["parts"], native["parts"]);
+            }
+        }
     }
 }

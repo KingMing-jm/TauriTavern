@@ -3,6 +3,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { memoryStore } from './test-store.mjs';
 import { installExtensionStoreApi } from '../../src/tauri/main/api/extension-store.js';
+import { installHostIdentity, HOSTS } from '../../tests/helpers/host-identity.mjs';
 import { defMeta, defPartition } from '../../.outfit-build/frontend/src/data.js';
 const root = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const bundle = pathToFileURL(path.join(root, 'src/scripts/extensions/outfit-manager/native-backend.js')).href;
@@ -12,22 +13,54 @@ const disk = memoryStore();
 const host = { __TAURITAVERN__: { api: {} } };
 const previousWindow = globalThis.window;
 globalThis.window = host;
-try {
-    installExtensionStoreApi({ async safeInvoke(command, args) {
-        switch (command) {
-            case 'try_get_extension_store_json': return disk.tryGetJson(args);
-            case 'set_extension_store_json': return disk.setJson(args);
-            case 'list_extension_store_keys': return disk.listKeys(args);
-            case 'list_extension_store_blob_keys': return disk.listBlobKeys(args);
-            case 'set_extension_store_blob': return disk.setBlob({ ...args, data: Buffer.from(args.dataBase64, 'base64') });
-            case 'get_extension_store_blob': return {
-                content_base64: Buffer.from(await (await disk.getBlob(args)).arrayBuffer()).toString('base64'),
-                mime_type: 'application/octet-stream',
-            };
-            case 'delete_extension_store_blob': return disk.deleteBlob(args);
-            default: throw new Error(`Unexpected native store command: ${command}`);
+const restoreIdentity = installHostIdentity(HOSTS.android);
+const sessions = new Map(), readers = new Map();
+let nextId = 0;
+async function invoke(command, args, options) {
+    switch (command) {
+        case 'open_extension_store_entry': {
+            const result = args.kind === 'json' ? await disk.tryGetJson(args) : null;
+            if (args.kind === 'json' && !result.found) return null;
+            const bytes = args.kind === 'json' ? Buffer.from(JSON.stringify(result.value)) : Buffer.from(await (await disk.getBlob(args)).arrayBuffer());
+            const readerId = ++nextId;
+            readers.set(readerId, bytes);
+            return { readerId, mimeType: 'application/octet-stream' };
         }
-    } });
+        case 'read_bytes': {
+            assert.ok(readers.has(args.rid));
+            const bytes = readers.get(args.rid);
+            readers.set(args.rid, Buffer.alloc(0));
+            return new Uint8Array(bytes);
+        }
+        case 'plugin:resources|close': return assert.ok(readers.delete(args.rid));
+        case 'begin_extension_store_commit': {
+            const sessionId = String(++nextId);
+            sessions.set(sessionId, { entry: args, bytes: Buffer.alloc(0) });
+            return { sessionId, maxFrameBytes: 1024 };
+        }
+        case 'append_extension_store_commit_chunk': {
+            const session = sessions.get(options.headers['session-id']);
+            assert.equal(Number(options.headers.offset), session.bytes.length);
+            assert.equal(options.headers['chunk-encoding'], 'base64');
+            session.bytes = Buffer.concat([session.bytes, Buffer.from(args.data, 'base64')]);
+            return session.bytes.length;
+        }
+        case 'finish_extension_store_commit': {
+            const session = sessions.get(args.sessionId);
+            assert.ok(sessions.delete(args.sessionId));
+            assert.equal(args.expectedSize, session.bytes.length);
+            return session.entry.operation === 'setBlob'
+                ? disk.setBlob({ ...session.entry, data: session.bytes })
+                : disk.setJson({ ...session.entry, value: JSON.parse(session.bytes.toString()) });
+        }
+        case 'abort_extension_store_commit': return assert.ok(sessions.delete(args.sessionId));
+        case 'list_extension_store_keys': return args.kind === 'blob' ? disk.listBlobKeys(args) : disk.listKeys(args);
+        case 'delete_extension_store_entry': return disk.deleteBlob(args);
+        default: throw new Error(`Unexpected native store command: ${command}`);
+    }
+}
+try {
+    installExtensionStoreApi({ safeInvoke: invoke, invokeTransport: invoke });
 } finally {
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
@@ -90,3 +123,7 @@ runtime = await start();
 assert.equal((await request('GET', '/data')).status, 409);
 assert.equal((await request('PUT', '/data', {})).status, 409);
 console.log('PASS: original backend through TT store API: first partition upload, persistence, images, full-data conversion, batch rejection, snapshot restore, stale-client guard, GC and corrupt-data write lock.');
+
+assert.equal(sessions.size, 0);
+assert.equal(readers.size, 0);
+restoreIdentity();

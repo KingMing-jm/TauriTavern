@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use super::policy::WorkspaceAccessPolicy;
+use crate::services::agent_workspace_scope::WorkspaceAccessPolicy;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
 use tt_domain::models::tool::ToolInvocation;
@@ -31,6 +31,11 @@ pub(crate) fn classify_workspace_io_error(
     error: DomainError,
 ) -> Result<AgentToolResult, DomainError> {
     match error {
+        error @ DomainError::WorkspaceAccessDenied { .. } => Ok(tool_error(
+            call,
+            "workspace.access_denied",
+            &error.to_string(),
+        )),
         DomainError::NotFound(message) => {
             Ok(tool_error(call, "workspace.file_not_found", &message))
         }
@@ -42,9 +47,7 @@ pub(crate) fn classify_workspace_io_error(
         DomainError::WorkspaceFileNotText { path } => Ok(tool_error(
             call,
             "workspace.file_not_text",
-            &format!(
-                "The file `{path}` is not UTF-8 text, so this text reader cannot open it. Choose another text file or continue with the workspace context already available."
-            ),
+            &format!("`{path}` is not UTF-8 text."),
         )),
         other => Err(other),
     }

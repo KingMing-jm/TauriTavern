@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 import { Window } from 'happy-dom';
+import { installHostIdentity, HOSTS } from '../helpers/host-identity.mjs';
 
 const root = fileURLToPath(new URL('../../src/', import.meta.url));
 
@@ -24,6 +25,21 @@ export function createBrowserRuntime() {
         url: 'http://localhost/',
         settings: { disableCSSFileLoading: true, disableJavaScriptFileLoading: true },
     });
+    // happy-dom #2182: Node's getter must work on subclasses, as it does in browsers.
+    // DOMPurify reads this getter directly to avoid DOM clobbering.
+    const nodeName = Object.getOwnPropertyDescriptor(window.Node.prototype, 'nodeName');
+    Object.defineProperty(window.Node.prototype, 'nodeName', {
+        ...nodeName,
+        get() {
+            for (let proto = Object.getPrototypeOf(this); proto !== window.Node.prototype; proto = Object.getPrototypeOf(proto)) {
+                const getter = Object.getOwnPropertyDescriptor(proto, 'nodeName')?.get;
+                if (getter) return getter.call(this);
+            }
+            return nodeName.get.call(this);
+        },
+    });
+    // Elements must stringify as in browsers, or Popper serializes the document during startup.
+    delete window.Element.prototype.toString;
     window.document.write(readFileSync(path.join(root, 'index.html'), 'utf8')
         .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, ''));
     for (const file of ['jquery-3.5.1.min.js', 'jquery-ui.min.js', 'jquery.transit.min.js',
@@ -34,6 +50,18 @@ export function createBrowserRuntime() {
     // Exercise actual module evaluation without starting chat/settings IO through DOM-ready callbacks.
     window.jQuery.holdReady(true);
     window.structuredClone = structuredClone;
+    installHostIdentity(HOSTS.windows, window);
+    // happy-dom's TransformStream is a Node Transform, not the Web Streams constructor.
+    window.TransformStream = TransformStream;
+    // happy-dom exposes option elements but omits the browser's Option constructor.
+    window.Option = function (text = '', value = text, defaultSelected = false, selected = false) {
+        const option = window.document.createElement('option');
+        option.text = text;
+        option.value = value;
+        option.defaultSelected = defaultSelected;
+        option.selected = selected;
+        return option;
+    };
     const scheduleTimeout = window.setTimeout.bind(window);
     window.setTimeout = (callback, delay = 0, ...args) =>
         scheduleTimeout(callback, Math.ceil(delay / TIMER_SCALE), ...args);

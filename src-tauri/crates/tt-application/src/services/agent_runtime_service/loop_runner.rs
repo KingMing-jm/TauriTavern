@@ -1,21 +1,23 @@
 use std::collections::HashSet;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::commit_ledger::RunCommitLedger;
-use super::continuation::{InvocationFrame, InvocationStep, PendingToolTurn};
+use super::continuation::{AutoCommitFile, InvocationFrame, InvocationStep, PendingToolTurn};
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
 use super::tool_execution::recoverable_tool_error;
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::{AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect};
+use crate::services::agent_workspace_scope::is_auto_commit_text_path;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
     AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentToolResult, WorkspaceFileWriteMode, WorkspacePath,
+    AgentToolResult, WorkspacePath,
 };
 use tt_domain::models::tool::ToolTurnContract;
 use tt_domain::text_metrics::TextMetrics;
@@ -28,6 +30,7 @@ use tt_domain::text_metrics::TextMetrics;
 )]
 pub(super) enum AgentLoopExit {
     Finished,
+    Replied,
     Transferred {
         task_id: String,
         new_invocation_id: String,
@@ -46,10 +49,11 @@ impl AgentRuntimeService {
         let invocation_id = prepared.invocation.id.as_str();
         let exit_policy = prepared.invocation.exit_policy;
         let profile = &prepared.profile;
-        let updates_run_status = exit_policy == AgentInvocationExitPolicy::RunFinishAllowed;
+        let updates_run_status = prepared.invocation.kind.owns_run_status();
+        let active_run = self.active_run_handle(run_id).await?;
         let auto_commit_text_mutations = updates_run_status
-            && self.run_repository.load_run(run_id).await?.presentation
-                == AgentRunPresentation::Foreground;
+            && matches!(&active_run.target, tt_domain::models::agent::AgentRunTarget::Chat(chat)
+                if chat.presentation == AgentRunPresentation::Foreground);
         let stream = self
             .active_run_handle(run_id)
             .await?
@@ -101,6 +105,34 @@ impl AgentRuntimeService {
                     let model_response_path = self
                         .store_model_response(run_id, invocation_id, round, &response)
                         .await?;
+                    let replied = exit_policy == AgentInvocationExitPolicy::ReplyAllowed
+                        && response.tool_calls.is_empty();
+                    if replied {
+                        let _publication = self.run_lifecycle_lock.lock().await;
+                        self.ensure_not_cancelled(cancel)?;
+                        self.append_session_history(
+                            run_id,
+                            invocation_id,
+                            round,
+                            &response.message,
+                        )
+                        .await?;
+                        self.transition_status(run_id, AgentRunStatus::Finishing)
+                            .await?;
+                        progress.step = InvocationStep::Exited(AgentLoopExit::Replied);
+                    } else {
+                        self.append_session_history(
+                            run_id,
+                            invocation_id,
+                            round,
+                            &response.message,
+                        )
+                        .await?;
+                    }
+                    // Canonical history owns the response now; previews never publish messages.
+                    active_run.live_projection.send_if_modified(|projection| {
+                        projection.responses.remove(invocation_id).is_some()
+                    });
                     self.event(
                         run_id,
                         AgentRunEventLevel::Debug,
@@ -134,7 +166,7 @@ impl AgentRuntimeService {
                     .await?;
 
                     let has_tools = !response.tool_calls.is_empty();
-                    let direct_output_path = if has_tools {
+                    let direct_output_path = if has_tools || replied {
                         None
                     } else {
                         self.capture_direct_output(
@@ -149,7 +181,9 @@ impl AgentRuntimeService {
                     // Keep the actual transcript current, including finish/return/handoff turns.
                     prepared.request.provider_state = exchange.provider_state;
                     prepared.request.messages.push(response.message);
-                    if !has_tools {
+                    if replied {
+                        return Ok(Some(AgentLoopExit::Replied));
+                    } else if !has_tools {
                         progress.drift_attempts += 1;
                         let nudge = build_drift_recovery_nudge(
                             commit_ledger.explicit_count(),
@@ -208,6 +242,7 @@ impl AgentRuntimeService {
                                 turn.next_call + 1 == turn.calls.len(),
                                 commit_ledger,
                                 cancel,
+                                turn.auto_commit.as_ref().map(|(_, file)| file.path.clone()),
                             )
                             .await
                         {
@@ -249,6 +284,31 @@ impl AgentRuntimeService {
                             matches!(&outcome.effect, AgentToolEffect::HandoffAccepted { .. });
                         let mut events = Vec::new();
                         let result = outcome.result;
+                        // All file tools use one publication policy. Failed direct writes may
+                        // have changed an earlier candidate, so they cancel this round's publish.
+                        let candidate = match &outcome.effect {
+                            AgentToolEffect::WorkspaceFileWritten { file, .. } => {
+                                if stream && is_auto_commit_text_path(&file.path) {
+                                    turn.auto_commit = None;
+                                    None
+                                } else {
+                                    Some(&file.path)
+                                }
+                            }
+                            AgentToolEffect::WorkspaceFilePatched { file, .. } => Some(&file.path),
+                            AgentToolEffect::AutoCommitCandidateUpdated { path } => {
+                                turn.auto_commit = None;
+                                path.as_ref()
+                            }
+                            _ => None,
+                        };
+                        if !result.is_error
+                            && let Some(path) =
+                                candidate.filter(|path| is_auto_commit_text_path(path))
+                        {
+                            turn.auto_commit =
+                                Some((call.call_id.clone(), AutoCommitFile { path: path.clone() }));
+                        }
                         match outcome.effect {
                             AgentToolEffect::WorkspaceFileWritten { file, mode } => {
                                 let metrics = TextMetrics::from_text(&file.text);
@@ -263,44 +323,6 @@ impl AgentRuntimeService {
                                         "sha256": file.sha256.as_str(),
                                     }),
                                 ));
-                                turn.auto_commit = if stream {
-                                    None
-                                } else {
-                                    Some((call.call_id.clone(), file))
-                                };
-                            }
-                            AgentToolEffect::WorkspaceFilesWritten {
-                                files,
-                                last_text_mutation,
-                            } => {
-                                for file in &files {
-                                    let metrics = TextMetrics::from_text(&file.text);
-                                    events.push((
-                                        "workspace_file_written",
-                                        json!({
-                                            "invocationId": invocation_id,
-                                            "path": file.path.as_str(),
-                                            "mode": WorkspaceFileWriteMode::Replace,
-                                            "chars": metrics.chars,
-                                            "words": metrics.words,
-                                            "sha256": file.sha256.as_str(),
-                                        }),
-                                    ));
-                                }
-                                if let Some(path) = last_text_mutation {
-                                    let file = files
-                                        .into_iter()
-                                        .find(|file| file.path == path)
-                                        .ok_or_else(|| {
-                                            let message = format!(
-                                                "Workspace batch effect is missing its last mutation `{}`",
-                                                path.as_str()
-                                            );
-                                            progress.blocked_reason = Some(message.clone());
-                                            ApplicationError::InternalError(message)
-                                        })?;
-                                    turn.auto_commit = Some((call.call_id.clone(), file));
-                                }
                             }
                             AgentToolEffect::WorkspaceFilePatched {
                                 file,
@@ -320,7 +342,6 @@ impl AgentRuntimeService {
                                         "replacements": replacements,
                                     }),
                                 ));
-                                turn.auto_commit = Some((call.call_id.clone(), file));
                             }
                             AgentToolEffect::ChatCommitRequested { .. } => {}
                             AgentToolEffect::Finish => {
@@ -354,20 +375,24 @@ impl AgentRuntimeService {
                                     new_invocation_id,
                                 });
                             }
-                            AgentToolEffect::None => {}
+                            AgentToolEffect::None
+                            | AgentToolEffect::AutoCommitCandidateUpdated { .. } => {}
                         }
 
                         remember_seen_child_results_from_await(
                             std::slice::from_ref(&result),
                             &mut progress.seen_child_results,
                         );
-                        prepared.request.messages.push(AgentModelMessage {
+                        let message = AgentModelMessage {
                             role: AgentModelRole::Tool,
                             parts: vec![AgentModelContentPart::ToolResult { result }],
                             provider_metadata: Value::Null,
-                        });
+                        };
+                        prepared.request.messages.push(message.clone());
                         turn.next_call += 1;
                         recorded?;
+                        self.append_session_history(run_id, invocation_id, round, &message)
+                            .await?;
                         if patched && updates_run_status {
                             self.transition_status(run_id, AgentRunStatus::ApplyingWorkspacePatch)
                                 .await?;
@@ -393,7 +418,7 @@ impl AgentRuntimeService {
                         self.auto_commit_text_file_if_eligible(
                             run_id,
                             call_id,
-                            file,
+                            &file.path,
                             round,
                             invocation_id,
                             commit_ledger,
@@ -457,8 +482,9 @@ impl AgentRuntimeService {
 
         let path = direct_output_path(profile)?;
         let file = self
-            .workspace_repository
-            .write_text(run_id, &path, text)
+            .workspace_files(run_id)
+            .await?
+            .write_text(&path, text, WorkspaceWriteGuard::Unchecked)
             .await?;
         let metrics = TextMetrics::from_text(&file.text);
         self.event(
@@ -513,7 +539,7 @@ fn remember_seen_child_results_from_await(
     }
 }
 
-fn completion_tool_name(
+pub(super) fn completion_tool_name(
     exit_policy: AgentInvocationExitPolicy,
     turn: &ToolTurnContract,
 ) -> &'static str {
@@ -528,6 +554,7 @@ fn completion_tool_name(
             }
         }
         AgentInvocationExitPolicy::TaskReturnRequired => "task_return",
+        AgentInvocationExitPolicy::ReplyAllowed => "an assistant reply",
     }
 }
 
@@ -644,11 +671,16 @@ fn build_drift_recovery_nudge(
                  in plain text."
             )
         }
+        AgentInvocationExitPolicy::ReplyAllowed => {
+            unreachable!("Session replies do not enter drift recovery")
+        }
     }
 }
 
 fn direct_output_path(profile: &ResolvedAgentProfile) -> Result<WorkspacePath, ApplicationError> {
-    let message_body_path = WorkspacePath::parse(&profile.output.message_body_path)?;
+    let message_body_path = WorkspacePath::parse(
+        &crate::services::agent_profile_service::require_output(profile)?.message_body_path,
+    )?;
     let root = message_body_path
         .as_str()
         .split('/')

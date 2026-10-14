@@ -3,7 +3,7 @@
   "productName": "TauriTavern Outfit",
   "identifier": "com.kingming.tauritavern.outfit",
   "upstream": {
-    "tauritavern": "f6126b4fc9243eb3990f2c0bad86e2afcb502f22",
+    "tauritavern": "58ba0fc4f97addf17743d10cd15d2596d32cd5b0",
     "frontend": {
       "repository": "wenshui012/Outfit-Manager",
       "revision": "e2a98eaf5bc860029d41e82b6a65a7c8f4f09a6d"
@@ -14,22 +14,6 @@
       "pluginVersion": "2.0.3"
     }
   },
-  "targets": [
-    {
-      "id": "macos-arm64",
-      "rustTarget": "aarch64-apple-darwin",
-      "bundle": "dmg",
-      "architecture": "arm64"
-    },
-    {
-      "id": "android-arm64",
-      "rustTarget": "aarch64-linux-android",
-      "tauriTarget": "aarch64",
-      "bundle": "apk",
-      "abi": "arm64-v8a",
-      "minSdkVersion": 26
-    }
-  ],
   "requirements": {
     "frontendBundled": true,
     "backendBundled": true,
@@ -38,6 +22,11 @@
     "remoteBackendRequired": false,
     "preservePartitionTransactions": true,
     "preserveRecoveryAndWriteLocks": true,
-    "separateApplicationIdentity": true
-  }
+    "separateApplicationIdentity": "Windows/macOS/Android/iOS; Flatpak/Nix/OpenHarmony retain upstream identities"
+  },
+  "targetSources": [
+    ".github/workflows/stable-release.yml",
+    ".github/workflows/canary-release.yml",
+    ".github/workflows/ohos.yml"
+  ]
 }

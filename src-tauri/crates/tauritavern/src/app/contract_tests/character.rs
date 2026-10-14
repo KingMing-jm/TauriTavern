@@ -1,45 +1,6 @@
 use super::*;
 
 #[tokio::test]
-async fn character_service_exports_real_png_card_metadata() {
-    let root = temp_root("character-png");
-    let service = character_service(&root).await;
-    let card = character_card("Alice", json!({ "custom": "kept" }));
-
-    service
-        .create_character(create_character("Alice", Some(card)))
-        .await
-        .expect("create character");
-
-    let stored_png = fs::read(root.join("default-user/characters/Alice.png"))
-        .await
-        .expect("read stored character png");
-    assert!(stored_png.starts_with(b"\x89PNG\r\n\x1a\n"));
-    let stored_card = read_card_json(&stored_png);
-    assert_eq!(stored_card.pointer("/unknownTop/kept"), Some(&json!(true)));
-    assert_eq!(
-        stored_card.pointer("/data/extensions/custom"),
-        Some(&json!("kept"))
-    );
-
-    let exported = service
-        .export_character_content(ExportCharacterContentDto {
-            name: "Alice".to_string(),
-            format: "png".to_string(),
-        })
-        .await
-        .expect("export png content");
-    let exported_card = read_card_json(&exported.data);
-    assert_eq!(exported.mime_type, "image/png");
-    assert_eq!(
-        exported_card.pointer("/data/extensions/custom"),
-        Some(&json!("kept"))
-    );
-
-    let _ = fs::remove_dir_all(root).await;
-}
-
-#[tokio::test]
 async fn character_service_returns_raw_json_and_v2_data_metadata_from_real_png() {
     let root = temp_root("character-raw-json");
     let service = character_service(&root).await;
@@ -269,6 +230,7 @@ async fn character_service_export_sanitizes_private_fields_and_materializes_curr
         "Alice",
         json!({
             "world": "Lore",
+            "custom": "kept",
             "fav": true,
             "tauritavern": {
                 "agentProfiles": {
@@ -305,6 +267,14 @@ async fn character_service_export_sanitizes_private_fields_and_materializes_curr
         .await
         .expect("export png");
     let exported_card = read_card_json(&exported.data);
+    assert_eq!(
+        exported_card.pointer("/unknownTop/kept"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        exported_card.pointer("/data/extensions/custom"),
+        Some(&json!("kept"))
+    );
     assert_eq!(exported_card.get("fav"), Some(&json!(false)));
     assert!(exported_card.get("chat").is_none());
     assert_eq!(
@@ -320,17 +290,15 @@ async fn character_service_export_sanitizes_private_fields_and_materializes_curr
         Some(&json!({ "mode": "requiresConfiguration" }))
     );
 
-    let export_path = root.join("exported.json");
-    service
-        .export_character(ExportCharacterDto {
+    let exported_json = service
+        .export_character_content(ExportCharacterContentDto {
             name: "Alice".to_string(),
-            target_path: export_path.to_string_lossy().to_string(),
+            format: "json".to_string(),
         })
         .await
-        .expect("export file");
+        .expect("export json");
     let exported_file: Value =
-        serde_json::from_slice(&fs::read(export_path).await.expect("read exported file"))
-            .expect("parse exported file");
+        serde_json::from_slice(&exported_json.data).expect("parse exported json");
     assert_eq!(
         exported_file.pointer("/data/character_book/entries/0/content"),
         Some(&json!("current lore"))
@@ -535,7 +503,7 @@ async fn character_service_lorebook_conflict_resolution_uses_current_or_embedded
     );
     assert!(embedded_result.world_written);
     let overwritten = world_repository
-        .get_world_info("EmbeddedLore", false)
+        .get_world_info("EmbeddedLore")
         .await
         .expect("read overwritten world")
         .expect("world exists");
@@ -594,7 +562,7 @@ async fn character_service_embedded_resolution_overwrites_the_linked_world() {
     );
     assert_eq!(
         world_repository
-            .get_world_info("CurrentLore", false)
+            .get_world_info("CurrentLore")
             .await
             .expect("read current world")
             .expect("current world exists")
@@ -603,7 +571,7 @@ async fn character_service_embedded_resolution_overwrites_the_linked_world() {
     );
     assert!(
         world_repository
-            .get_world_info("UpdatedLore", false)
+            .get_world_info("UpdatedLore")
             .await
             .expect("check unlinked embedded world")
             .is_none()
@@ -650,7 +618,7 @@ async fn character_service_rejects_stale_lorebook_resolution() {
         .expect_err("stale choice must not overwrite the newer local world");
     assert!(matches!(error, ApplicationError::Conflict(_)));
     let current = world_repository
-        .get_world_info("Lore", false)
+        .get_world_info("Lore")
         .await
         .expect("read current world")
         .expect("current world exists");
@@ -703,7 +671,7 @@ async fn character_service_import_auto_links_embedded_lorebook_without_dropping_
         Some(&json!("kept"))
     );
     let world = world_repository
-        .get_world_info("Embedded Lore", false)
+        .get_world_info("Embedded Lore")
         .await
         .expect("read world info")
         .expect("world info imported");
@@ -734,7 +702,7 @@ async fn character_service_import_auto_links_embedded_lorebook_without_dropping_
     );
     assert!(
         world_repository
-            .get_world_info("Embedded Lore (1)", false)
+            .get_world_info("Embedded Lore (1)")
             .await
             .expect("read named import world info")
             .is_some()
@@ -886,7 +854,7 @@ async fn character_service_replace_and_copy_preserve_local_lorebook_binding() {
     );
 
     let current_world = world_repository
-        .get_world_info("Old Lore", false)
+        .get_world_info("Old Lore")
         .await
         .expect("read current world info")
         .expect("current world info exists");
@@ -896,7 +864,7 @@ async fn character_service_replace_and_copy_preserve_local_lorebook_binding() {
     );
     assert!(
         world_repository
-            .get_world_info("Old Lore (1)", false)
+            .get_world_info("Old Lore (1)")
             .await
             .expect("check implicit lorebook copy")
             .is_none()
@@ -922,7 +890,7 @@ async fn character_service_replace_and_copy_preserve_local_lorebook_binding() {
     assert_eq!(resolved.world, "Old Lore");
     assert_eq!(resolved.affected_world.as_deref(), Some("Old Lore (1)"));
     let copy = world_repository
-        .get_world_info("Old Lore (1)", false)
+        .get_world_info("Old Lore (1)")
         .await
         .expect("read copied world")
         .expect("copy exists");
@@ -932,7 +900,7 @@ async fn character_service_replace_and_copy_preserve_local_lorebook_binding() {
     );
     assert_eq!(
         world_repository
-            .get_world_info("Old Lore", false)
+            .get_world_info("Old Lore")
             .await
             .expect("read original world"),
         Some(current_world)
@@ -1008,14 +976,14 @@ async fn character_delete_removes_only_string_linked_lorebooks() {
 
     assert!(
         world_repository
-            .get_world_info("Lore", false)
+            .get_world_info("Lore")
             .await
             .expect("read linked world")
             .is_none()
     );
     assert!(
         world_repository
-            .get_world_info("42", false)
+            .get_world_info("42")
             .await
             .expect("read numeric world")
             .is_some()

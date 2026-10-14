@@ -6,7 +6,7 @@ use crate::dto::character_dto::{
     CharacterDto, CharacterLorebookConflictDto, CharacterLorebookConflictResolution,
     CheckCharacterLorebookConflictDto, CreateCharacterDto, CreateCharacterWithAvatarResultDto,
     CreateWithAvatarDto, DeleteCharacterDto, DuplicateCharacterDto, ExportCharacterContentDto,
-    ExportCharacterContentResultDto, ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto,
+    ExportCharacterContentResultDto, GetCharacterChatsDto, ImportCharacterDto,
     MergeCharacterCardDataDto, RenameCharacterDto, ReplaceCharacterDto,
     ResolveCharacterLorebookConflictDto, ResolveCharacterLorebookConflictResultDto,
     UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
@@ -531,21 +531,18 @@ impl CharacterService {
         &self,
         character_name: &str,
     ) -> Result<Vec<AgentChatWorkspaceTarget>, ApplicationError> {
-        let summaries = self
+        let identities = self
             .chat_repository
-            .list_chat_summaries(Some(character_name), true)
+            .list_character_chat_identities(character_name)
             .await?;
         let mut targets = Vec::new();
-        for summary in summaries {
-            let Some(metadata) = summary.chat_metadata.as_ref() else {
-                continue;
-            };
-            if let Some(target) = AgentWorkspaceLifecycleService::character_target_from_metadata(
-                character_name,
-                &summary.file_name,
-                metadata,
-            )? {
-                targets.push(target);
+        for identity in identities {
+            if let Some(integrity) = identity.integrity {
+                targets.push(AgentWorkspaceLifecycleService::character_target(
+                    character_name,
+                    &identity.file_name,
+                    &integrity,
+                )?);
             }
         }
         Ok(targets)
@@ -666,23 +663,6 @@ impl CharacterService {
         Ok(CharacterDto::from(character))
     }
 
-    /// Export a character
-    pub async fn export_character(&self, dto: ExportCharacterDto) -> Result<(), ApplicationError> {
-        tracing::debug!("Exporting character: {} to {}", dto.name, dto.target_path);
-        let export_value = self.build_export_card_value(&dto.name).await?;
-        let export_json = serde_json::to_string_pretty(&export_value).map_err(|error| {
-            ApplicationError::InternalError(format!(
-                "Failed to serialize exported character JSON: {}",
-                error
-            ))
-        })?;
-
-        self.repository
-            .export_character(&dto.name, Path::new(&dto.target_path), &export_json)
-            .await?;
-        Ok(())
-    }
-
     /// Export character as downloadable content (PNG/JSON)
     pub async fn export_character_content(
         &self,
@@ -708,7 +688,6 @@ impl CharacterService {
 
             return Ok(ExportCharacterContentResultDto {
                 data: pretty_json.into_bytes(),
-                mime_type: "application/json".to_string(),
             });
         }
 
@@ -724,10 +703,7 @@ impl CharacterService {
             .export_character_png_bytes(&dto.name, &card_json)
             .await?;
 
-        Ok(ExportCharacterContentResultDto {
-            data: png_bytes,
-            mime_type: "image/png".to_string(),
-        })
+        Ok(ExportCharacterContentResultDto { data: png_bytes })
     }
 
     /// Update a character's avatar
@@ -945,7 +921,7 @@ impl CharacterService {
         let embedded_canonical = Self::canonical_character_book_for_compare(embedded_book)?;
         let Some(world_info) = self
             .world_info_repository
-            .get_world_info(&world_name, false)
+            .get_world_info(&world_name)
             .await?
         else {
             return Ok(CharacterLorebookConflictDto {
@@ -1110,7 +1086,7 @@ impl CharacterService {
         let current_available = !world_name.is_empty()
             && self
                 .world_info_repository
-                .get_world_info(&world_name, false)
+                .get_world_info(&world_name)
                 .await?
                 .is_some();
         let linked_world = if current_available {
@@ -1178,11 +1154,7 @@ impl CharacterService {
             return;
         };
 
-        let materialized = match self
-            .world_info_repository
-            .get_world_info(world_name, false)
-            .await
-        {
+        let materialized = match self.world_info_repository.get_world_info(world_name).await {
             Ok(Some(world_info)) => {
                 Self::apply_materialized_lorebook(character, world_name, &world_info)
             }
@@ -1296,7 +1268,7 @@ impl CharacterService {
 
         let existing = self
             .world_info_repository
-            .get_world_info(&base_name, false)
+            .get_world_info(&base_name)
             .await?;
 
         if let Some(existing_payload) = existing {
@@ -1355,7 +1327,7 @@ impl CharacterService {
             let candidate = Self::indexed_world_name(base_name, suffix)?;
             match self
                 .world_info_repository
-                .get_world_info(&candidate, false)
+                .get_world_info(&candidate)
                 .await?
             {
                 Some(candidate_payload)
@@ -1459,7 +1431,7 @@ impl CharacterService {
 
         let world_info = self
             .world_info_repository
-            .get_world_info(world_name, false)
+            .get_world_info(world_name)
             .await?
             .ok_or_else(|| {
                 DomainError::NotFound(format!("World info file {} doesn't exist", world_name))
