@@ -89,10 +89,10 @@ impl AgentExtensionTools {
         result: ExtensionToolReply,
     ) -> bool {
         let mut state = self.state.lock().expect("extension tool bridge poisoned");
-        if !state
+        if state
             .pending
             .get(request_id)
-            .is_some_and(|pending| pending.owner == owner)
+            .is_none_or(|pending| pending.owner != owner)
         {
             return false;
         }
