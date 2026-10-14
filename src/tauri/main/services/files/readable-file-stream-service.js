@@ -50,6 +50,7 @@ export function createReadableFileStreamService({ invoke }) {
 
                 try {
                     const bytes = await readChunk(rid);
+                    if (closed) return;
                     if (bytes.byteLength === 0) {
                         await closeOnce();
                         controller.close();
@@ -95,7 +96,7 @@ export function createReadableFileStreamService({ invoke }) {
                     return new Uint8Array(0);
                 }
 
-                // plugin-fs returns the requested length even on a short read, plus its 8-byte trailer.
+                // plugin-fs returns the bytes it read followed by their count as an 8-byte trailer.
                 const len = Math.min(FS_READ_MAX_CHUNK_BYTES, remaining);
                 const data = await invoke('plugin:fs|read', {
                     rid,
@@ -118,22 +119,22 @@ export function createReadableFileStreamService({ invoke }) {
     /** @param {string} name */
     async function createChatBackupDownloadStream(name) {
         const rid = await invoke('open_chat_backup_download', { name });
-        return createChatByteStream(rid);
+        return createByteStream(rid);
     }
 
     /** @param {number} rid */
-    function createChatByteStream(rid) {
+    function createByteStream(rid) {
         return createReadableResourceStream(
             Promise.resolve(rid),
             async (rid) => normalizeReadResponse(
-                await invoke('read_chat_bytes', { rid }),
+                await invoke('read_bytes', { rid }),
             ),
         );
     }
 
     return {
         createChatBackupDownloadStream,
-        createChatByteStream,
+        createByteStream,
         createReadableFileStream,
     };
 }

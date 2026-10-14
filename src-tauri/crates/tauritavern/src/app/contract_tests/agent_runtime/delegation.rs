@@ -93,6 +93,13 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
 
     let requests = fixture.model_gateway.requests().await;
     assert_eq!(requests.len(), 3);
+    assert!(
+        message_text_for_role(&requests[0], AgentModelRole::System)
+            .contains("scene-critic [delegate]")
+    );
+    assert!(
+        !message_text_for_role(&requests[1], AgentModelRole::System).contains("Available agents:")
+    );
     assert_eq!(
         requests[0].provider_state["invocationId"],
         ROOT_AGENT_INVOCATION_ID
@@ -116,7 +123,6 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
             tool.tool_id.native_name(),
             "workspace.commit"
                 | "workspace.finish"
-                | "agent.list"
                 | "agent.delegate"
                 | "agent.handoff"
                 | "agent.await"
@@ -143,7 +149,6 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
             *tool_id,
             "builtin:workspace.commit"
                 | "builtin:workspace.finish"
-                | "builtin:agent.list"
                 | "builtin:agent.delegate"
                 | "builtin:agent.handoff"
                 | "builtin:agent.await"
@@ -184,14 +189,39 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
                     }),
                 ),
             ]),
-            model_tool_response(vec![model_tool_call(
-                "call_target_finish",
-                "workspace_finish",
-                json!({}),
-            )]),
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_target_denied",
+                    "workspace_write_file",
+                    json!({
+                        "path": "scratch/forbidden.md", "content": "must not be written"
+                    }),
+                ),
+                model_tool_call(
+                    "call_target_write",
+                    "workspace_write_file",
+                    json!({
+                        "path": "summaries/review.md", "content": "Reviewed."
+                    }),
+                ),
+                model_tool_call("call_target_finish", "workspace_finish", json!({})),
+            ]),
         ],
     );
     let profile = configure_handoff_profiles(&fixture).await;
+    let mut editor = fixture
+        .profile_service
+        .load_profile("final-editor")
+        .await
+        .unwrap()
+        .unwrap();
+    editor.workspace.visible_roots = vec!["output".into(), "summaries".into()];
+    editor.workspace.writable_roots = vec!["output".into(), "summaries".into()];
+    fixture
+        .profile_service
+        .save_profile(editor, fixture.service.tool_catalog())
+        .await
+        .unwrap();
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -244,6 +274,32 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
 
     wait_for_event_type(&fixture.agent_repository, &handle.run_id, "run_completed").await;
     let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    let files = fixture
+        .agent_repository
+        .open_filesystem(&handle.run_id)
+        .await
+        .unwrap();
+    assert!(
+        files
+            .metadata(Some(&WorkspacePath::parse("scratch/forbidden.md").unwrap()))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        files
+            .read_text(&WorkspacePath::parse("summaries/review.md").unwrap())
+            .await
+            .unwrap()
+            .text,
+        "Reviewed."
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "tool_call_failed"
+                && event.payload["callId"] == "call_target_denied"
+                && event.payload["isError"] == true)
+    );
     let commit = events
         .iter()
         .find(|event| event.event_type == "chat_commit_recorded")
@@ -269,6 +325,13 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
     assert!(task_completed < invocation_completed && invocation_completed < run_completed);
     let requests = fixture.model_gateway.requests().await;
     assert_eq!(requests.len(), 2);
+    assert!(
+        message_text_for_role(&requests[0], AgentModelRole::System)
+            .contains("final-editor [handoff]")
+    );
+    assert!(
+        !message_text_for_role(&requests[1], AgentModelRole::System).contains("Available agents:")
+    );
     assert_eq!(
         requests[1].provider_state["invocationId"],
         task.child_invocation_id
@@ -455,10 +518,10 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
     assert_eq!(root_invocation.status, AgentInvocationStatus::Transferred);
     let artifact = fixture
         .agent_repository
-        .read_text(
-            &handle.run_id,
-            &WorkspacePath::parse("output/main.md").unwrap(),
-        )
+        .open_filesystem(&handle.run_id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse("output/main.md").unwrap())
         .await
         .expect("read artifact");
     assert_eq!(artifact.text, "Complete this work before handing off.");
@@ -486,16 +549,9 @@ pub(super) async fn configure_return_mode_profiles(
     child.id = AgentProfileId::parse("scene-critic").expect("child profile id");
     child.display_name = "Scene Critic".to_string();
     child.tools.max_rounds = 1;
-    child.tools.allow.retain(|name| {
-        !matches!(
-            name.as_str(),
-            "builtin:agent.list"
-                | "builtin:agent.delegate"
-                | "builtin:agent.handoff"
-                | "builtin:agent.await"
-        )
-    });
+    // The return-mode invocation must prune these capabilities from the profile.
     child.delegation = AgentDelegationPolicy {
+        can_delegate: true,
         callable: true,
         allow_as_subagent: true,
         allowed_callers: vec![root.id.as_str().to_string()],

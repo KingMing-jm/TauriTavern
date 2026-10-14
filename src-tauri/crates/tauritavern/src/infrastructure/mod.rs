@@ -1,4 +1,5 @@
 // Infrastructure layer - implements interfaces defined in the domain layer
+pub(crate) mod agent_extension_tools;
 pub mod apis;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 pub mod apple_webview_js_dialogs;
@@ -15,6 +16,7 @@ pub mod macos_webview;
 pub mod paths;
 pub mod persistence;
 pub mod repositories;
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg(desktop)]
 pub mod runtime_paths_config_store;
+pub mod staging;
 pub mod zipkit;

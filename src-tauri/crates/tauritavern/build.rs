@@ -4,7 +4,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
-    let needs_embedded_resources = needs_embedded_resources();
+    println!("cargo:rustc-check-cfg=cfg(embedded_resources)");
+    let embedded_resources = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android")
+        || std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("ohos");
+    if embedded_resources {
+        println!("cargo:rustc-cfg=embedded_resources");
+    }
+    let needs_embedded_resources =
+        embedded_resources || std::env::var_os("CARGO_FEATURE_PORTABLE").is_some();
+    emit_ios_factory_profile();
 
     // These are the frontend/resource directories that feed generated Rust artifacts.
     println!("cargo:rerun-if-changed=../../../default/content");
@@ -23,16 +31,38 @@ fn main() {
         panic!("Failed to generate resource artifacts: {}", error);
     }
 
-    tauri_build::try_build(tauri_build::Attributes::new().plugin(
-        "speech-synthesis",
-        tauri_build::InlinedPlugin::new().commands(&["initialize", "speak", "cancel"]),
-    ))
+    // `capabilities/pilot/` grants the pilot plugin, which only devtools-pilot builds compile.
+    let capabilities = if std::env::var_os("CARGO_FEATURE_DEVTOOLS_PILOT").is_some() {
+        "./capabilities/**/*.json"
+    } else {
+        "./capabilities/*.json"
+    };
+    println!("cargo:rerun-if-changed=capabilities");
+
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .capabilities_path_pattern(capabilities)
+            .plugin(
+                "speech-synthesis",
+                tauri_build::InlinedPlugin::new().commands(&["initialize", "speak", "cancel"]),
+            ),
+    )
     .expect("Failed to build Tauri application")
 }
 
-fn needs_embedded_resources() -> bool {
-    std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android")
-        || std::env::var_os("CARGO_FEATURE_PORTABLE").is_some()
+fn emit_ios_factory_profile() {
+    println!("cargo:rerun-if-env-changed=TAURITAVERN_IOS_POLICY_PROFILE");
+    let value = std::env::var("TAURITAVERN_IOS_POLICY_PROFILE").unwrap_or_default();
+    let profile = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
+        value.trim()
+    } else {
+        ""
+    };
+    match profile {
+        "" | "full" | "ios_internal_full" | "ios_external_beta" => {}
+        _ => panic!("Unsupported TAURITAVERN_IOS_POLICY_PROFILE: {profile:?}"),
+    }
+    println!("cargo:rustc-env=TAURITAVERN_IOS_POLICY_PROFILE={profile}");
 }
 
 fn emit_git_build_metadata() {
