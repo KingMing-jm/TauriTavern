@@ -1,12 +1,9 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-
-const PRODUCT_NAME = "TauriTavern";
-const BINARY_CANDIDATES = ["tauritavern", "TauriTavern"];
 
 function printHelp() {
     console.log(`Usage: node scripts/build-portable.mjs [options] [-- <extra tauri args>]
@@ -105,31 +102,14 @@ function resolveReleaseDirectory(repoRoot, target) {
     return releaseRoot;
 }
 
-function resolvePortableBinary(releaseDirectory) {
+function resolvePortableBinary(releaseDirectory, config) {
     const executableSuffix = process.platform === "win32" ? ".exe" : "";
-
-    for (const candidate of BINARY_CANDIDATES) {
-        const binaryPath = path.join(releaseDirectory, `${candidate}${executableSuffix}`);
-        if (existsSync(binaryPath) && statSync(binaryPath).isFile()) {
-            return binaryPath;
-        }
+    const binaryName = config.mainBinaryName ?? "tauritavern";
+    const binaryPath = path.join(releaseDirectory, `${binaryName}${executableSuffix}`);
+    if (!existsSync(binaryPath) || !statSync(binaryPath).isFile()) {
+        throw new Error(`Unable to locate built portable binary: ${binaryPath}`);
     }
-
-    const fallback = readdirSync(releaseDirectory, { withFileTypes: true })
-        .filter((entry) => entry.isFile())
-        .map((entry) => entry.name)
-        .find((name) => {
-            if (process.platform === "win32") {
-                return name.toLowerCase().endsWith(".exe");
-            }
-            return !name.includes(".");
-        });
-
-    if (fallback) {
-        return path.join(releaseDirectory, fallback);
-    }
-
-    throw new Error(`Unable to locate built portable binary in ${releaseDirectory}`);
+    return binaryPath;
 }
 
 function normalizePlatform(platform) {
@@ -176,12 +156,13 @@ function main() {
     run("node", tauriArgs, repoRoot, tauriEnv);
 
     const releaseDirectory = resolveReleaseDirectory(repoRoot, options.target);
-    const binaryPath = resolvePortableBinary(releaseDirectory);
+    const config = JSON.parse(readFileSync(path.join(repoRoot, "src-tauri/crates/tauritavern/tauri.conf.json"), "utf8"));
+    const binaryPath = resolvePortableBinary(releaseDirectory, config);
     const outputDirectory = path.resolve(repoRoot, options.outputDir);
     mkdirSync(outputDirectory, { recursive: true });
 
     const extension = process.platform === "win32" ? ".exe" : "";
-    const artifactName = `${PRODUCT_NAME}-${buildPlatformTag(options.target)}-portable${extension}`;
+    const artifactName = `${config.productName}-${buildPlatformTag(options.target)}-portable${extension}`;
     const artifactPath = path.join(outputDirectory, artifactName);
     copyFileSync(binaryPath, artifactPath);
 

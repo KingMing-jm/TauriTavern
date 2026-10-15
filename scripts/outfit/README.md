@@ -1,4 +1,4 @@
-# TauriTavern Outfit bundle
+# TauriTavern Lucky — Outfit bundle
 
 This branch packages the pinned Outfit frontend and original JavaScript backend on every application target built by upstream. The native extension-store bridge is shared across platforms; no external Node installation, Termux or remote backend is required.
 
@@ -14,7 +14,7 @@ Export application archives and Outfit data before changing installations. Exist
 
 ## Complete build coverage
 
-`.github/workflows/outfit-macos.yml` keeps its historical filename but now runs **Outfit Bundles - All Upstream Targets**, on every push to this feature branch or manual dispatch. Build jobs are derived from upstream stable/canary/OpenHarmony workflows, including their matrices, toolchains, dependencies and build commands:
+`.github/workflows/outfit-macos.yml` keeps its historical filename but now runs **TauriTavern-Lucky - All Upstream Targets**, on every push to this feature branch or manual dispatch. Build jobs are derived from upstream stable/canary/OpenHarmony workflows, including their matrices, toolchains, dependencies and build commands:
 
 | Target | Packages |
 | --- | --- |
@@ -67,7 +67,11 @@ Run preparation in a disposable build checkout. It generates `.outfit-build` and
 
 ## Identity and signing
 
-Windows/macOS use the Outfit product name and identifier `com.kingming.tauritavern.outfit`; Android/iOS use that installed identifier. Flatpak, Nix and OpenHarmony retain upstream's package identity to use their existing packaging contracts; they replace the corresponding original package.
+The personal edition mark is **Lucky**. `integrations/outfit-manager/targets.json` owns the product name `TauriTavern-Lucky`, launcher label `TauriTavern Lucky`, and executable name `tauritavern-lucky` (`.exe` on Windows). Preparation applies these names to desktop bundles, Android resources, the existing Xcode project, OpenHarmony labels, Linux desktop metadata and Flatpak/Nix packaging. Kotlin/JNI namespaces, Xcode target/scheme and native library names stay unchanged.
+
+Download artifact names and contained packages carry `TauriTavern-Lucky`. APK names include version, ABI and build variant; IPA names distinguish the two policy variants; HAP names include the target architecture. Mobile package staging copies signed bytes without rewriting them. Installed identifiers and the Outfit storage namespace stay unchanged from earlier fork builds; the visible rename is not a data migration. Windows installation paths and MSI upgrade detection follow the new product name, so export a backup before replacing an older Outfit installer.
+
+Windows/macOS use the Lucky product name and identifier `com.kingming.tauritavern.outfit`; Android/iOS use that installed identifier. Flatpak and OpenHarmony retain upstream's package identity to use their existing packaging contracts; they replace the corresponding original package. Nix retains the `tauritavern` flake output but installs `tauritavern-lucky`.
 
 macOS uses ad-hoc signing without notarization. Android uses repository secrets `OUTFIT_ANDROID_KEYSTORE_BASE64`, `OUTFIT_ANDROID_KEY_ALIAS`, `OUTFIT_ANDROID_KEY_PASSWORD` when configured. Otherwise CI uses a temporary preview signing key: later builds cannot update that installation with a different key. Preserve your own signing key privately; private keys are never artifacts.
 

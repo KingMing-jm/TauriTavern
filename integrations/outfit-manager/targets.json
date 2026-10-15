@@ -1,6 +1,8 @@
 {
   "schemaVersion": 1,
-  "productName": "TauriTavern Outfit",
+  "productName": "TauriTavern-Lucky",
+  "displayName": "TauriTavern Lucky",
+  "mainBinaryName": "tauritavern-lucky",
   "identifier": "com.kingming.tauritavern.outfit",
   "upstream": {
     "tauritavern": "0ee1233a470eb7253f78679d283b4133d9a620e9",

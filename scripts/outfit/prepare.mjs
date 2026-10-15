@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { prepareBranding } from './branding.mjs';
 
 const root = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const build = path.join(root, '.outfit-build');
@@ -84,13 +85,7 @@ async function main() {
     });
     const repository = path.join(root, 'src-tauri/crates/tt-adapter-extension/src/repositories/file_extension_repository.rs');
     await replaceOnce(repository, '    "tauritavern-version",', '    "tauritavern-version",\n    "outfit-manager",');
-    const gradle = path.join(root, 'src-tauri/crates/tauritavern/gen/android/app/build.gradle.kts');
-    // Keep Kotlin/JNI namespace unchanged; isolate only the installed application ID.
-    await replaceOnce(gradle, 'applicationId = "com.tauritavern.client"', 'applicationId = "com.kingming.tauritavern.outfit"');
-    await writeFile(path.join(build, 'tauri.outfit.desktop.conf.json'), JSON.stringify({ productName: 'TauriTavern Outfit', identifier: 'com.kingming.tauritavern.outfit' }, null, 2));
-    await writeFile(path.join(build, 'tauri.outfit.android.conf.json'), JSON.stringify({ productName: 'TauriTavern Outfit' }, null, 2));
-    await writeFile(path.join(build, 'tauri.outfit.ios.conf.json'), JSON.stringify({ identifier: 'com.kingming.tauritavern.outfit' }, null, 2));
-    await replaceOnce(path.join(root, 'src-tauri/crates/tauritavern/gen/apple/project.yml'), 'PRODUCT_BUNDLE_IDENTIFIER: com.tauritavern.client', 'PRODUCT_BUNDLE_IDENTIFIER: com.kingming.tauritavern.outfit');
+    await prepareBranding(root);
     const { releaseTargets } = await import('./release-workflow.mjs');
     const result = { sources: SOURCES, backendSha256: provenance, dependencies: dependencyVersions, backendMode: 'original JavaScript backend + native atomic filesystem bridge; no Node runtime', targets: await releaseTargets(), androidApplicationId: 'com.kingming.tauritavern.outfit' };
     await writeFile(path.join(build, 'BUILD-MANIFEST.json'), JSON.stringify(result, null, 2));

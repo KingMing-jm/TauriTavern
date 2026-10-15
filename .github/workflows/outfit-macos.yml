@@ -1,5 +1,5 @@
 # Build jobs derived by scripts/outfit/release-workflow.mjs from upstream release workflows.
-name: Outfit Bundles - All Upstream Targets
+name: TauriTavern-Lucky - All Upstream Targets
 on:
   workflow_dispatch: null
   push:
@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: always
-  TAURITAVERN_BUILD_BRANCH: outfit-bundled
+  TAURITAVERN_BUILD_BRANCH: tauritavern-lucky
   TAURITAVERN_BUILD_REVISION: ${{ github.sha }}
 jobs:
   contracts:
@@ -137,7 +137,7 @@ jobs:
           uploadWorkflowArtifacts: true
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
-          workflowArtifactNamePattern: TauriTavern-Outfit-${{ matrix.artifact_prefix }}[platform]-[arch]-[bundle]
+          workflowArtifactNamePattern: TauriTavern-Lucky-${{ matrix.artifact_prefix }}[platform]-[arch]-[bundle]
       - name: Verify macOS application architecture and signature
         if: startsWith(matrix.platform, 'macos')
         shell: bash
@@ -145,9 +145,10 @@ jobs:
           set -euo pipefail
           case "${{ matrix.target_args }}" in *x86_64*) target=x86_64-apple-darwin; arch=x86_64;; *) target=aarch64-apple-darwin; arch=arm64;; esac
           case "${{ matrix.target_args }}" in *--debug*) profile=debug;; *) profile=release;; esac
-          app="src-tauri/target/$target/$profile/bundle/macos/TauriTavern Outfit.app"
+          app="src-tauri/target/$target/$profile/bundle/macos/TauriTavern-Lucky.app"
           codesign --verify --deep --strict "$app"
           executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
+          test "$executable" = 'tauritavern-lucky'
           file "$app/Contents/MacOS/$executable" | grep "$arch"
     timeout-minutes: 120
   portable:
@@ -192,7 +193,7 @@ jobs:
       - name: Upload portable binary
         uses: actions/upload-artifact@v7
         with:
-          name: TauriTavern-Outfit-${{ matrix.name }}-portable
+          name: TauriTavern-Lucky-${{ matrix.name }}-portable
           path: portable/*
           if-no-files-found: error
     timeout-minutes: 120
@@ -318,11 +319,10 @@ jobs:
           tauriScript: node ../../../scripts/tauri-app.mjs
           mobile: ${{ matrix.mobile }}
           args: ${{ matrix.args }} --config ${{ github.workspace }}/.outfit-build/tauri.outfit.android.conf.json
-          uploadWorkflowArtifacts: true
+          uploadWorkflowArtifacts: false
           uploadPlainBinary: true
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
-          workflowArtifactNamePattern: TauriTavern-Outfit-[platform]-[arch]-[bundle]
         if: matrix.mobile == 'android'
       - name: Verify Android signatures and package identity
         if: matrix.mobile == 'android'
@@ -334,8 +334,20 @@ jobs:
           test "${#apks[@]}" -gt 0
           for apk in "${apks[@]}"; do
             "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$apk"
-            "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | grep "package: name='com.kingming.tauritavern.outfit'"
+            badging=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk")
+            grep -F "package: name='com.kingming.tauritavern.outfit'" <<< "$badging"
+            grep -F "application-label:'TauriTavern Lucky'" <<< "$badging"
           done
+      - name: Name signed APK downloads
+        if: matrix.mobile == 'android'
+        run: node scripts/outfit/package-artifacts.mjs android
+      - uses: actions/upload-artifact@v7
+        if: matrix.mobile == 'android'
+        with:
+          name: TauriTavern-Lucky-android-apk
+          include-hidden-files: true
+          path: .outfit-build/packages/*.apk
+          if-no-files-found: error
       - name: Build unsigned iOS archive
         if: matrix.mobile == 'ios'
         env:
@@ -349,14 +361,16 @@ jobs:
           app=$(find src-tauri/crates/tauritavern/gen/apple -path '*.xcarchive/Products/Applications/*.app' -type d)
           test -n "$app"
           test "$(printf '%s\n' "$app" | wc -l | tr -d ' ')" = 1
+          test "$(basename "$app")" = 'TauriTavern-Lucky.app'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app/Info.plist")" = 'TauriTavern Lucky'
           mkdir -p .outfit-build/ipa/Payload
           cp -R "$app" .outfit-build/ipa/Payload/
-          (cd .outfit-build/ipa && ditto -c -k --keepParent Payload ../TauriTavern-Outfit-unsigned.ipa)
+          (cd .outfit-build/ipa && ditto -c -k --keepParent Payload ../TauriTavern-Lucky-${{ matrix.policy }}-unsigned.ipa)
           printf '%s\n' 'Unsigned IPA: sign with your own Apple identity before installing. No TestFlight upload performed.' > .outfit-build/IOS-SIGNING.txt
       - uses: actions/upload-artifact@v7
         if: matrix.mobile == 'ios'
         with:
-          name: TauriTavern-Outfit-ios-arm64-${{ matrix.policy }}-unsigned-ipa
+          name: TauriTavern-Lucky-ios-arm64-${{ matrix.policy }}-unsigned-ipa
           include-hidden-files: true
           path: |-
             .outfit-build/*.ipa
@@ -365,7 +379,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: matrix.mobile == 'android'
         with:
-          name: TauriTavern-Outfit-Android-Signing
+          name: TauriTavern-Lucky-Android-Signing
           include-hidden-files: true
           path: .outfit-build/ANDROID-SIGNING.txt
           if-no-files-found: error
@@ -412,11 +426,11 @@ jobs:
       - name: Archive Flatpak application tree
         run: |-
           flatpak build-export .outfit-flatpak-repo .flatpak-build
-          flatpak build-bundle .outfit-flatpak-repo TauriTavern-Outfit-x86_64.flatpak com.tauritavern.client
+          flatpak build-bundle .outfit-flatpak-repo TauriTavern-Lucky-x86_64.flatpak com.tauritavern.client
       - name: Upload Flatpak build tree
         uses: actions/upload-artifact@v7
         with:
-          name: TauriTavern-Outfit-linux-x64-flatpak
+          name: TauriTavern-Lucky-linux-x64-flatpak
           path: "*.flatpak"
           if-no-files-found: error
     env:
@@ -447,17 +461,17 @@ jobs:
       - name: Bundle pinned Outfit frontend and backend
         run: node scripts/outfit/prepare.mjs
       - name: Include generated extension in Nix source snapshot
-        run: git add src/scripts/extensions/outfit-manager src-tauri/crates/tt-adapter-extension/src/repositories/file_extension_repository.rs
+        run: git add -u && git add src/scripts/extensions/outfit-manager
       - uses: cachix/install-nix-action@v31
       - name: Build release flake
         run: nix --accept-flake-config build .#tauritavern --print-build-logs
       - name: Export Nix closure
         run: |-
           sudo apt-get update && sudo apt-get install -y zstd
-          nix-store --export $(nix-store --query --requisites ./result) | zstd -T0 > TauriTavern-Outfit-${{ matrix.system }}.nar.zst
+          nix-store --export $(nix-store --query --requisites ./result) | zstd -T0 > TauriTavern-Lucky-${{ matrix.system }}.nar.zst
       - uses: actions/upload-artifact@v7
         with:
-          name: TauriTavern-Outfit-${{ matrix.system }}-nix
+          name: TauriTavern-Lucky-${{ matrix.system }}-nix
           path: "*.nar.zst"
           if-no-files-found: error
     timeout-minutes: 120
@@ -482,6 +496,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Bundle pinned Outfit frontend and backend
         run: node scripts/outfit/prepare.mjs
+      - name: Snapshot prepared OpenHarmony project
+        run: git add src-tauri/crates/tauritavern/gen/ohos
       - run: python3 scripts/ohos/prepare.py
       - uses: Swatinem/rust-cache@v2
         with:
@@ -502,17 +518,21 @@ jobs:
           test "${#haps[@]}" -eq 1
           python3 scripts/ohos/validate-hap.py --target "$TARGET_TRIPLE" "${haps[0]}"
           project=src-tauri/crates/tauritavern/gen/ohos
-          changes=$(git status --porcelain -- "$project")
+          git diff --exit-code -- "$project"
+          changes=$(git ls-files --others --exclude-standard -- "$project")
           if [ -n "$changes" ]; then
             printf '%s\n' "$changes"
             git diff -- "$project"
             exit 1
           fi
+      - name: Name HAP download
+        run: node scripts/outfit/package-artifacts.mjs ohos
       - uses: actions/upload-artifact@v7
         with:
-          name: TauriTavern-Outfit-ohos-${{ matrix.arch }}-unsigned-hap
-          path: src-tauri/crates/tauritavern/gen/ohos/entry/build/default/outputs/default/*.hap
+          name: TauriTavern-Lucky-ohos-${{ matrix.arch }}-unsigned-hap
+          path: .outfit-build/packages/*.hap
           if-no-files-found: error
+          include-hidden-files: true
     needs: contracts
     env:
       TARGET_TRIPLE: ${{ matrix.arch }}-unknown-linux-ohos
