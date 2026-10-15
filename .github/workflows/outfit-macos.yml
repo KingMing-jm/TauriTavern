@@ -339,7 +339,7 @@ jobs:
       - name: Build unsigned iOS archive
         if: matrix.mobile == 'ios'
         env:
-          TAURITAVERN_IOS_POLICY_PROFILE: ${{ matrix.policy == 'standard' && '' || matrix.policy }}
+          TAURITAVERN_IOS_POLICY_PROFILE: ${{ matrix.policy == 'standard' && 'full' || matrix.policy }}
         run: node scripts/tauri-app.mjs --prepare-frontend ios build ${{ matrix.args }} --target aarch64 --no-sign --archive-only --config "$PWD/.outfit-build/tauri.outfit.ios.conf.json"
       - name: Package unsigned IPA
         if: matrix.mobile == 'ios'
@@ -357,6 +357,7 @@ jobs:
         if: matrix.mobile == 'ios'
         with:
           name: TauriTavern-Outfit-ios-arm64-${{ matrix.policy }}-unsigned-ipa
+          include-hidden-files: true
           path: |-
             .outfit-build/*.ipa
             .outfit-build/IOS-SIGNING.txt
@@ -365,6 +366,7 @@ jobs:
         if: matrix.mobile == 'android'
         with:
           name: TauriTavern-Outfit-Android-Signing
+          include-hidden-files: true
           path: .outfit-build/ANDROID-SIGNING.txt
           if-no-files-found: error
     timeout-minutes: 120

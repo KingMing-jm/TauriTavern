@@ -113,7 +113,7 @@ for apk in "\${apks[@]}"; do
   "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$apk"
   "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | grep "package: name='com.kingming.tauritavern.outfit'"
 done` },
-        { name: 'Build unsigned iOS archive', if: "matrix.mobile == 'ios'", env: { TAURITAVERN_IOS_POLICY_PROFILE: "${{ matrix.policy == 'standard' && '' || matrix.policy }}" }, run: 'node scripts/tauri-app.mjs --prepare-frontend ios build ${{ matrix.args }} --target aarch64 --no-sign --archive-only --config "$PWD/.outfit-build/tauri.outfit.ios.conf.json"' },
+        { name: 'Build unsigned iOS archive', if: "matrix.mobile == 'ios'", env: { TAURITAVERN_IOS_POLICY_PROFILE: "${{ matrix.policy == 'standard' && 'full' || matrix.policy }}" }, run: 'node scripts/tauri-app.mjs --prepare-frontend ios build ${{ matrix.args }} --target aarch64 --no-sign --archive-only --config "$PWD/.outfit-build/tauri.outfit.ios.conf.json"' },
         { name: 'Package unsigned IPA', if: "matrix.mobile == 'ios'", shell: 'bash', run: `set -euo pipefail
 app=$(find src-tauri/crates/tauritavern/gen/apple -path '*.xcarchive/Products/Applications/*.app' -type d)
 test -n "$app"
@@ -122,8 +122,8 @@ mkdir -p .outfit-build/ipa/Payload
 cp -R "$app" .outfit-build/ipa/Payload/
 (cd .outfit-build/ipa && ditto -c -k --keepParent Payload ../TauriTavern-Outfit-unsigned.ipa)
 printf '%s\\n' 'Unsigned IPA: sign with your own Apple identity before installing. No TestFlight upload performed.' > .outfit-build/IOS-SIGNING.txt` },
-        { uses: 'actions/upload-artifact@v7', if: "matrix.mobile == 'ios'", with: { name: 'TauriTavern-Outfit-ios-arm64-${{ matrix.policy }}-unsigned-ipa', path: '.outfit-build/*.ipa\n.outfit-build/IOS-SIGNING.txt', 'if-no-files-found': 'error' } },
-        { uses: 'actions/upload-artifact@v7', if: "matrix.mobile == 'android'", with: { name: 'TauriTavern-Outfit-Android-Signing', path: '.outfit-build/ANDROID-SIGNING.txt', 'if-no-files-found': 'error' } },
+        { uses: 'actions/upload-artifact@v7', if: "matrix.mobile == 'ios'", with: { name: 'TauriTavern-Outfit-ios-arm64-${{ matrix.policy }}-unsigned-ipa', 'include-hidden-files': true, path: '.outfit-build/*.ipa\n.outfit-build/IOS-SIGNING.txt', 'if-no-files-found': 'error' } },
+        { uses: 'actions/upload-artifact@v7', if: "matrix.mobile == 'android'", with: { name: 'TauriTavern-Outfit-Android-Signing', 'include-hidden-files': true, path: '.outfit-build/ANDROID-SIGNING.txt', 'if-no-files-found': 'error' } },
     );
 
     const flatpak = common(structuredClone(stable.jobs.flatpak));

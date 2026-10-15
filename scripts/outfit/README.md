@@ -28,7 +28,19 @@ Export application archives and Outfit data before changing installations. Exist
 | Nix x64 and ARM64 | Exported runtime closures (`.nar.zst`) |
 | Experimental OpenHarmony ARM64 | Unsigned HAP |
 
-After merging upstream, regenerate and verify the jobs:
+## Automatic upstream synchronization
+
+The default branch owns `.github/workflows/outfit-sync-upstream.yml`. GitHub checks `Darkatse/TauriTavern:dev` every 30 minutes, at minutes 17 and 47 UTC, and supports manual **Run workflow**. Scheduled execution may be delayed by GitHub.
+
+On a new upstream commit, the workflow prepares merges into both `main` and `feat/outfit-manager-bundled`, retaining fork commits. It regenerates the full packaging workflow, updates the recorded upstream revision, runs native/plugin smoke checks and `pnpm run check`, then pushes both candidates atomically. The existing Outfit push workflow builds all platforms. Unchanged upstream commits cause no push or build.
+
+Conflicts, failed generation/checks or concurrent user pushes stop the operation. No force push or automatic conflict resolution is used, and neither remote branch is updated by a rejected atomic push. The Actions log and job summary report failures; GitHub notifications follow your account's Actions notification settings.
+
+One-time setup: create a fine-grained personal access token restricted to `KingMing-jm/TauriTavern`, with repository **Contents: Read and write** and **Workflows: Read and write**. Store it as the repository Actions secret **`UPSTREAM_SYNC_TOKEN`**. Keep the value out of code, chat and artifacts. The token is supplied only to the final publication step; dependency installation and validation use no publisher credential.
+
+This permission is needed because upstream updates and packaging regeneration can modify workflow files. A PAT push also triggers the existing build workflow; an ordinary `GITHUB_TOKEN` push does not. If the secret is absent or expires, updates stop with an explicit error. No-change runs remain read-only. Default-branch workflow placement is required by GitHub schedules; keep that controller on `main` when changing repository branches.
+
+For a manual local merge, refresh packaging with:
 
 ```sh
 pnpm install --frozen-lockfile
