@@ -1,0 +1,122 @@
+name: Sync upstream dev and build Outfit
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/outfit-sync-upstream.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outfit-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'KingMing-jm/TauriTavern'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/outfit-manager-bundled
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare upstream merge candidates
+        id: merge
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/Darkatse/TauriTavern.git
+          git fetch --no-tags upstream refs/heads/dev:refs/remotes/upstream/dev
+          node scripts/outfit/sync-upstream.mjs prepare
+      - name: Verify publisher credential is configured
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          HAS_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN != '' }}
+        run: |
+          if [ "$HAS_SYNC_TOKEN" != true ]; then
+            echo '::error::Add UPSTREAM_SYNC_TOKEN in repository Actions secrets. Use a fine-grained token restricted to this repository with Contents and Workflows read/write. Nothing was pushed.'
+            exit 1
+          fi
+      - uses: pnpm/setup@v2
+        if: steps.merge.outputs.feature_changed == 'true'
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+      - name: Refresh packaging from the merged upstream workflows
+        if: steps.merge.outputs.feature_changed == 'true'
+        env:
+          UPSTREAM_SHA: ${{ steps.merge.outputs.upstream_sha }}
+        run: |
+          pnpm install --frozen-lockfile
+          node scripts/outfit/sync-upstream.mjs finalize
+      - name: Install Linux test dependencies
+        if: steps.merge.outputs.feature_changed == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libdbus-1-dev libwebkit2gtk-4.1-dev librsvg2-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.merge.outputs.feature_changed == 'true'
+        with:
+          components: clippy
+      - uses: swatinem/rust-cache@v2
+        if: steps.merge.outputs.feature_changed == 'true'
+        with:
+          workspaces: src-tauri -> target
+          shared-key: upstream-sync-checks
+      - uses: astral-sh/setup-uv@v10.0.0
+        if: steps.merge.outputs.feature_changed == 'true'
+        with:
+          version: latest-known
+      - name: Verify bundled Outfit and complete application checks
+        if: steps.merge.outputs.feature_changed == 'true'
+        run: |
+          set -euo pipefail
+          node --test scripts/outfit/*.test.mjs
+          node scripts/outfit/prepare.mjs
+          node scripts/outfit/smoke.mjs
+          node scripts/check-rust-crate-boundaries.mjs
+          pnpm run check
+          # Validation prepares generated assets; publish only the committed candidate.
+          git restore --worktree -- .
+      - name: Publish both branches and trigger all platform builds
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          MAIN_SHA: ${{ steps.merge.outputs.main_sha }}
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          gh auth setup-git
+          node scripts/outfit/sync-upstream.mjs publish
+      - name: Report result
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+          CHANGED: ${{ steps.merge.outputs.changed }}
+          SOURCE_SHA: ${{ steps.merge.outputs.upstream_sha }}
+        run: |
+          {
+            echo '## Upstream sync'
+            echo "Result: $RESULT"
+            echo "Upstream dev: $SOURCE_SHA"
+            if [ "$RESULT" != success ]; then
+              echo 'Sync stopped. No conflict is automatically resolved. Failed checks or rejected atomic pushes do not update either branch.'
+            elif [ "$CHANGED" = true ]; then
+              echo 'Updated main and the Outfit branch. A changed Outfit branch triggers the existing full-platform push workflow.'
+            else
+              echo 'Already up to date. No push or rebuild was needed.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
