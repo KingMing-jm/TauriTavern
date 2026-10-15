@@ -48,6 +48,8 @@ jobs:
         run: node --experimental-vm-modules --test .outfit-build/frontend/tests/*.test.cjs
       - name: Full bundled-backend integration test
         run: node scripts/outfit/smoke.mjs
+      - name: Bundled BaiBai frontend integration test
+        run: pnpm run web:build --config-name vendor-libs && node --experimental-vm-modules scripts/outfit/baibai-smoke.mjs
       - name: Verify Rust workspace boundaries
         run: node scripts/check-rust-crate-boundaries.mjs
       - uses: actions/upload-artifact@v4
@@ -59,6 +61,7 @@ jobs:
           include-hidden-files: true
           path: |
             src/scripts/extensions/outfit-manager/
+            src/scripts/extensions/baibai-tools/
             .outfit-build/BUILD-MANIFEST.json
             .outfit-build/tooling/package-lock.json
   desktop:
@@ -123,7 +126,7 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - name: Bundle pinned Outfit frontend and backend
+      - name: Bundle pinned Outfit and BaiBai extensions
         run: node scripts/outfit/prepare.mjs
       - name: Build desktop bundles
         uses: tauri-apps/tauri-action@v1
@@ -186,7 +189,7 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - name: Bundle pinned Outfit frontend and backend
+      - name: Bundle pinned Outfit and BaiBai extensions
         run: node scripts/outfit/prepare.mjs
       - name: Build portable binary
         run: node scripts/build-portable.mjs --output-dir portable -- --config .outfit-build/tauri.outfit.desktop.conf.json
@@ -274,7 +277,7 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - name: Bundle pinned Outfit frontend and backend
+      - name: Bundle pinned Outfit and BaiBai extensions
         run: node scripts/outfit/prepare.mjs
       - name: Enable HTTP access for standard mobile bundle
         run: ./scripts/ci/configure-mobile-http.sh enable "${{ matrix.mobile }}"
@@ -398,7 +401,7 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - name: Bundle pinned Outfit frontend and backend
+      - name: Bundle pinned Outfit and BaiBai extensions
         run: node scripts/outfit/prepare.mjs
       - name: Remove build-time plugin checkouts before offline packaging
         run: rm -rf .outfit-build
@@ -458,10 +461,10 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - name: Bundle pinned Outfit frontend and backend
+      - name: Bundle pinned Outfit and BaiBai extensions
         run: node scripts/outfit/prepare.mjs
-      - name: Include generated extension in Nix source snapshot
-        run: git add -u && git add src/scripts/extensions/outfit-manager
+      - name: Include generated extensions in Nix source snapshot
+        run: git add -u && git add src/scripts/extensions/outfit-manager && git add -f src/scripts/extensions/baibai-tools
       - uses: cachix/install-nix-action@v31
       - name: Build release flake
         run: nix --accept-flake-config build .#tauritavern --print-build-logs
@@ -494,7 +497,7 @@ jobs:
           persist-credentials: false
       - run: git config --global --add safe.directory "$PWD"
       - run: pnpm install --frozen-lockfile
-      - name: Bundle pinned Outfit frontend and backend
+      - name: Bundle pinned Outfit and BaiBai extensions
         run: node scripts/outfit/prepare.mjs
       - name: Snapshot prepared OpenHarmony project
         run: git add src-tauri/crates/tauritavern/gen/ohos

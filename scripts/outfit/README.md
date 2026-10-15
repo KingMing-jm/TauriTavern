@@ -6,11 +6,18 @@ This branch packages the pinned Outfit frontend and original JavaScript backend 
 
 - Frontend: wenshui012/Outfit-Manager, e2a98eaf5bc860029d41e82b6a65a7c8f4f09a6d.
 - Backend: wenshui012/Outfit-Manager-Server, e13afe64dba250e92b62dd71932774ebbde00ae6 (2.0.3).
+- BaiBai frontend: baibai-git/ST-BaiBai-Tools, 2f3a221e00dd713baba45e1f857d093141593c09 (manifest version 1.0.0).
 - Original sources and notices are included in application resources. Node filesystem, hashing and Express dependencies are adapted to the WebView and native extension store; original transactions, partition validation, recovery, revisions and image GC remain in the original backend.
 
 The persistent namespace remains `outfit-manager-native-v1`. Immutable native Blob entries and a checksummed atomic directory index preserve files, directory renames, journals and snapshots. Empty files are represented by the index without Blob IO. Unreadable referenced blocks, corrupt indexes and ambiguous failed commits stop writes. Images retain their canonical plugin API paths in storage and exports; presentation resolves them to Blob URLs. Web Locks enforce a single owning document.
 
 Export application archives and Outfit data before changing installations. Existing data in another installation is not copied automatically. Do not install a second copy of the frontend extension in this application.
+
+柏宝箱随 Lucky 安装包内置，在扩展管理中显示为“柏宝箱 · Tauri 内置版”，沿用现有扩展启用/停用和设置保存机制。不要另外安装同一插件的第三方副本。构建使用固定提交中的原始 `dist/index.js`、音频和说明，构建清单记录来源与脚本 SHA-256；不会在应用启动时下载安装插件代码。
+
+此次只内置柏宝箱前端，不包含柏宝库后端；柏宝库相关面板会显示未安装，对应服务端功能不可用。插件默认把首次显示的聊天限制为最多 10 层，可在插件设置中关闭“减少加载楼层数”后调整酒馆原生设置。已有的柏宝箱用户配置仍沿用 `extension_settings.baiBaiToolkit`。
+
+该接入不承诺性能提升。2026-10-15 的 Chromium 隔离实验中，相同 100 层、10 层和 TT 内置虚拟化条件下均未测出额外渲染收益。插件保留原始滚动、界面和请求处理行为；原生 WebView、移动设备与复杂角色卡的完整交互仍需安装后验收。
 
 ## Complete build coverage
 
@@ -58,12 +65,14 @@ Artifacts are downloadable under the run's **Artifacts** section. Desktop/mobile
 node --test scripts/outfit/*.test.mjs
 node scripts/outfit/prepare.mjs
 node scripts/outfit/smoke.mjs
+pnpm run web:build --config-name vendor-libs
+node --experimental-vm-modules scripts/outfit/baibai-smoke.mjs
 node scripts/tauri-app.mjs --prepare-frontend build --target aarch64-apple-darwin --bundles app,dmg --config "$PWD/.outfit-build/tauri.outfit.desktop.conf.json"
 # With Android SDK, NDK, JDK and signing configured:
 node scripts/tauri-app.mjs --prepare-frontend android build --apk --split-per-abi --target aarch64 armv7 --config "$PWD/.outfit-build/tauri.outfit.android.conf.json"
 ```
 
-Run preparation in a disposable build checkout. It generates `.outfit-build` and `src/scripts/extensions/outfit-manager`, registers the first-party extension, and isolates Android/iOS installed identifiers without changing Android's Kotlin/JNI namespace. Pinned plugin commits, tooling versions, resolved tooling lockfile and backend hashes are retained in build manifests.
+Run preparation in a disposable build checkout. It generates `.outfit-build`, `src/scripts/extensions/outfit-manager` and `src/scripts/extensions/baibai-tools`, registers the bundled extensions, and isolates Android/iOS installed identifiers without changing Android's Kotlin/JNI namespace. Pinned plugin commits, tooling versions, resolved tooling lockfile and script hashes are retained in build manifests.
 
 ## Identity and signing
 

@@ -14,6 +14,7 @@ const native = path.join(root, 'scripts/outfit/native');
 export const SOURCES = Object.freeze({
     frontend: { repo: 'wenshui012/Outfit-Manager', sha: 'e2a98eaf5bc860029d41e82b6a65a7c8f4f09a6d' },
     backend: { repo: 'wenshui012/Outfit-Manager-Server', sha: 'e13afe64dba250e92b62dd71932774ebbde00ae6' },
+    baibai: { repo: 'baibai-git/ST-BaiBai-Tools', sha: '2f3a221e00dd713baba45e1f857d093141593c09' },
 });
 function run(command, args, cwd = root) {
     const result = spawnSync(command, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' && command === 'npm' });
@@ -46,6 +47,18 @@ async function main() {
     await mkdir(build, { recursive: true });
     const frontend = await checkout('frontend', SOURCES.frontend);
     const backend = await checkout('backend', SOURCES.backend);
+    const baibai = await checkout('baibai', SOURCES.baibai);
+    const baibaiExtension = path.join(root, 'src/scripts/extensions/baibai-tools');
+    await mkdir(baibaiExtension, { recursive: true });
+    // Use the upstream distribution verbatim, retaining dist-relative audio URLs.
+    for (const file of ['manifest.json', 'README.md', 'dist', 'video']) {
+        await cp(path.join(baibai, file), path.join(baibaiExtension, file), { recursive: true });
+    }
+    const baibaiManifestPath = path.join(baibaiExtension, 'manifest.json');
+    const baibaiManifest = JSON.parse(await readFile(baibaiManifestPath, 'utf8'));
+    baibaiManifest.display_name += ' · Tauri 内置版';
+    await writeFile(baibaiManifestPath, JSON.stringify(baibaiManifest, null, 2));
+    const baibaiSha256 = createHash('sha256').update(await readFile(path.join(baibaiExtension, 'dist/index.js'))).digest('hex');
     const dependencyVersions = { esbuild: '0.25.10', '@noble/hashes': '1.8.0', buffer: '6.0.3', 'path-browserify': '1.0.1' };
     await mkdir(tooling, { recursive: true });
     await writeFile(path.join(tooling, 'package.json'), JSON.stringify({ private: true, type: 'module', dependencies: dependencyVersions }, null, 2));
@@ -85,11 +98,13 @@ async function main() {
     });
     const repository = path.join(root, 'src-tauri/crates/tt-adapter-extension/src/repositories/file_extension_repository.rs');
     await replaceOnce(repository, '    "tauritavern-version",', '    "tauritavern-version",\n    "outfit-manager",');
+    await replaceOnce(repository, '    "outfit-manager",', '    "outfit-manager",\n    "baibai-tools",');
     await prepareBranding(root);
     const { releaseTargets } = await import('./release-workflow.mjs');
-    const result = { sources: SOURCES, backendSha256: provenance, dependencies: dependencyVersions, backendMode: 'original JavaScript backend + native atomic filesystem bridge; no Node runtime', targets: await releaseTargets(), androidApplicationId: 'com.kingming.tauritavern.outfit' };
+    const result = { sources: SOURCES, backendSha256: provenance, baibaiSha256, dependencies: dependencyVersions, backendMode: 'original JavaScript backend + native atomic filesystem bridge; no Node runtime', targets: await releaseTargets(), androidApplicationId: 'com.kingming.tauritavern.outfit' };
     await writeFile(path.join(build, 'BUILD-MANIFEST.json'), JSON.stringify(result, null, 2));
     await writeFile(path.join(extension, 'BUILD-MANIFEST.json'), JSON.stringify(result, null, 2));
+    await writeFile(path.join(baibaiExtension, 'BUILD-MANIFEST.json'), JSON.stringify({ source: SOURCES.baibai, entrySha256: baibaiSha256, backendBundled: false }, null, 2));
     for (const file of ['index.js', 'upstream.js', 'native-backend.js', 'src/db.js', 'server-source/index.js', 'server-source/recovery.js', 'server-source/storage-safety.js']) await access(path.join(extension, file));
     console.log('Prepared pinned frontend and original backend for all upstream release targets.');
 }

@@ -29,7 +29,7 @@ export async function releaseTargets() {
         ohos: JSON.parse(canary.jobs.ohos.with.architectures),
     };
 }
-const prep = { name: 'Bundle pinned Outfit frontend and backend', run: 'node scripts/outfit/prepare.mjs' };
+const prep = { name: 'Bundle pinned Outfit and BaiBai extensions', run: 'node scripts/outfit/prepare.mjs' };
 function step(job, name) {
     const matches = job.steps.filter(item => item.name === name);
     if (matches.length !== 1) throw new Error(`Upstream build step changed: ${name}; update the Outfit workflow generator`);
@@ -144,7 +144,7 @@ flatpak build-bundle .outfit-flatpak-repo ${BRAND.productName}-x86_64.flatpak co
 
     const nix = common(structuredClone(stable.jobs['publish-nix-cache']));
     nix.steps = nix.steps.filter(item => !['Sign and publish runtime and dependency paths', 'Verify public Nix cache'].includes(item.name));
-    nix.steps.splice(1, 0, { uses: 'pnpm/setup@v2', with: { runtime: 'node@22', cache: true, install: false } }, { run: 'pnpm install --frozen-lockfile' }, structuredClone(prep), { name: 'Include generated extension in Nix source snapshot', run: 'git add -u && git add src/scripts/extensions/outfit-manager' });
+    nix.steps.splice(1, 0, { uses: 'pnpm/setup@v2', with: { runtime: 'node@22', cache: true, install: false } }, { run: 'pnpm install --frozen-lockfile' }, structuredClone(prep), { name: 'Include generated extensions in Nix source snapshot', run: 'git add -u && git add src/scripts/extensions/outfit-manager && git add -f src/scripts/extensions/baibai-tools' });
     nix.steps.push({ name: 'Export Nix closure', run: `sudo apt-get update && sudo apt-get install -y zstd\nnix-store --export $(nix-store --query --requisites ./result) | zstd -T0 > ${BRAND.productName}-\${{ matrix.system }}.nar.zst` }, { uses: 'actions/upload-artifact@v7', with: { name: `${BRAND.productName}-\${{ matrix.system }}-nix`, path: '*.nar.zst', 'if-no-files-found': 'error' } });
 
     const hap = common(structuredClone(ohos.jobs.hap));
