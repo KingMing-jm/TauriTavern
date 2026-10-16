@@ -123,6 +123,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
   - `api.extension.store`：扩展级**全局持久化**（不绑定 chat），提供 KV JSON + Blob，支持多 table 与 Blob 流式读取。
     - 签名、读写边界与示例见 [Extension Store API](API/Extension.md)。
   - `api.db`：本地向量、JSON、文本索引、图和 TQL 数据库。`open` 异步等待可用；NodeId 为整数；签名、索引恢复边界与共享关闭语义见 [Database API](API/Database.md)。
+  - `api.nodePlugins`（实验）：`status/start/stop/restart() -> Promise<{state, plugins, error}>` 管理桌面 Node 插件宿主；插件端点与浏览器子资源共用 `/api/plugins/<id>/*`，配置和能力范围见 [NodeBackendPlugins](CurrentState/NodeBackendPlugins.md)。
   - `api.dev`：TauriTavern 规范化的开发调试 API。内置 Settings 开发面板与第三方扩展都应消费这一层，而不是直接依赖 Tauri 事件名或 Rust 命令名。
     - `api.dev.frontendLogs`
       - `list(options?: { limit?: number }) -> Promise<FrontendLogEntry[]>`

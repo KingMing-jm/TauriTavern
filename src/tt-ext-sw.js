@@ -30,6 +30,7 @@ function requiresIpcBridge(headers) {
 
 function shouldProxyRequestPath(pathname) {
     return pathname === USER_CSS_ROUTE
+        || pathname.startsWith('/api/plugins/')
         || pathname === THUMBNAIL_ROUTE
         || pathname.startsWith(THIRD_PARTY_EXTENSION_PREFIX)
         || pathname.startsWith(CHARACTERS_ROUTE_PREFIX)

@@ -1,0 +1,7 @@
+{
+  "name": "tauritavern-node-plugin-host",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "dependencies": { "express": "4.22.3" }
+}

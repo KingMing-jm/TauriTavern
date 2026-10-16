@@ -3,6 +3,7 @@ import { registerBootstrapRoutes } from './bootstrap-routes.js';
 import { registerSettingsRoutes } from './settings-routes.js';
 import { registerUserRoutes } from './user-routes.js';
 import { registerExtensionRoutes } from './extensions-routes.js';
+import { registerNodePluginRoutes } from './node-plugin-routes.js';
 import { registerQuickReplyRoutes } from './quick-replies-routes.js';
 import { registerResourceRoutes } from './resource-routes.js';
 import { registerCharacterRoutes } from './character-routes.js';
@@ -29,6 +30,7 @@ export function registerRoutes(router, context, responses) {
     registerUserRoutes(router, context, responses);
     registerQuickReplyRoutes(router, context, responses);
     registerExtensionRoutes(router, context, responses);
+    registerNodePluginRoutes(router, context);
     registerResourceRoutes(router, context, responses);
     registerCharacterRoutes(router, context, responses);
     registerChatRoutes(router, context, responses);

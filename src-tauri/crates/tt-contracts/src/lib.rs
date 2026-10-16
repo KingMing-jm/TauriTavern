@@ -9,6 +9,7 @@ pub mod extension_store;
 pub mod extension_tools;
 pub mod host;
 pub mod lan_discovery;
+pub mod node_plugins;
 pub mod observability;
 pub mod provider_metadata;
 pub mod range;

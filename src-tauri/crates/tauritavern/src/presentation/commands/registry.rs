@@ -213,6 +213,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // iOS file bridge commands
         // Extension commands
         super::extension_commands::get_extensions,
+        super::node_plugin_commands::node_plugin_status,
+        super::node_plugin_commands::start_node_plugins,
+        super::node_plugin_commands::stop_node_plugins,
+        super::node_plugin_commands::node_plugin_request,
         super::extension_commands::install_extension,
         super::extension_commands::update_extension,
         super::extension_commands::delete_extension,

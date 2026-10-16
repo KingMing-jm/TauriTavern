@@ -33,6 +33,7 @@ use tt_application::services::group_service::GroupService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
+use tt_application::services::node_plugin_service::NodePluginService;
 use tt_application::services::preset_service::PresetService;
 use tt_application::services::provider_metadata_service::ProviderMetadataService;
 use tt_application::services::quick_reply_service::QuickReplyService;
@@ -85,6 +86,12 @@ pub(super) async fn build(
         external_import_downloader.clone(),
     ));
     let local_mutation_gate = Arc::new(Semaphore::new(1));
+    let node_plugin_service = Arc::new(NodePluginService::new(Arc::new(
+        tt_adapter_extension::node_plugins::NodePluginProcess::new(
+            data_directory.root().to_path_buf(),
+            crate::platform::identity::HOST_IDENTITY.kind == tt_contracts::host::HostKind::Desktop,
+        )?,
+    )));
     let extension_service = Arc::new(ExtensionService::new(
         repositories.extension_repository.clone(),
         local_mutation_gate.clone(),
@@ -275,6 +282,7 @@ pub(super) async fn build(
         content_service,
         asset_service,
         extension_service,
+        node_plugin_service,
         extension_store_service,
         avatar_service,
         group_service,

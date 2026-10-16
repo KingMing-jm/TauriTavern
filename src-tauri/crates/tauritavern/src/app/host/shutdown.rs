@@ -80,6 +80,12 @@ pub(super) fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunE
             .cancel();
         state.lifecycle.chat_history_cancel.cancel();
         let lan_sync_service = state.services.lan_sync_service.clone();
+        let node_plugins = state.services.node_plugin_service.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = node_plugins.stop().await {
+                tracing::error!("Failed to stop Node plugins cleanly: {error}");
+            }
+        });
         tauri::async_runtime::spawn(async move {
             if let Err(error) = lan_sync_service.shutdown().await {
                 tracing::warn!("Failed to shut down LAN Sync cleanly: {}", error);

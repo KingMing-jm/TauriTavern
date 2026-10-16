@@ -11,6 +11,10 @@ export {};
  *
  * @typedef {(
  *   | 'get_window_snapshot'
+ *   | 'node_plugin_status'
+ *   | 'node_plugin_request'
+ *   | 'start_node_plugins'
+ *   | 'stop_node_plugins'
  *   | 'set_window_backdrop'
  *   | 'database_handle'
  *   | 'apply_agent_run_prune'

@@ -61,13 +61,19 @@ pub(super) fn create_main_window(
         .find(|config| config.label == "main")
         .expect("Main window config with label 'main' is missing");
 
+    let resource_app_handle = app.handle().clone();
     let builder = tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
         .initialization_script(crate::platform::identity::initialization_script())
         // Route browser-visible URLs to host-owned file handlers so upstream JS
         // can keep using HTTP-like paths for extensions, thumbnails, and user
         // data assets.
         .on_web_resource_request(move |request, response| {
-            handle_tauri_web_resource_request(host_resource_service.as_ref(), &request, response);
+            handle_tauri_web_resource_request(
+                &resource_app_handle,
+                host_resource_service.as_ref(),
+                &request,
+                response,
+            );
         });
 
     #[cfg(desktop)]

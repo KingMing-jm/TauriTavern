@@ -34,6 +34,7 @@ pub mod image_metadata_commands;
 pub mod lan_sync_commands;
 pub mod llm_connection_commands;
 pub mod mcp_commands;
+pub mod node_plugin_commands;
 pub mod preset_commands;
 pub mod provider_metadata_commands;
 pub mod quick_reply_commands;

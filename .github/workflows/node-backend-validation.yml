@@ -1,0 +1,47 @@
+name: Node backend plugin validation
+
+on:
+  push:
+    branches: [codex/node-backend-plugin-validation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-backend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baibaoku:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.95.0'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare pinned real plugin and browser libraries
+        run: |
+          node scripts/node-plugins/prepare.mjs "$RUNNER_TEMP/node-plugin-runtime"
+          pnpm run web:build --config-name vendor-libs
+      - name: Rust process and SQLite persistence acceptance
+        run: |
+          TT_NODE_PLUGIN_RUNTIME="$RUNNER_TEMP/node-plugin-runtime" TT_NODE_BINARY="$(command -v node)" \
+            cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-extension --test node_plugins -- --ignored
+      - name: Original client and TT router acceptance
+        run: node --experimental-vm-modules scripts/node-plugins/smoke.mjs "$RUNNER_TEMP/node-plugin-runtime"
+      - name: Architecture boundaries and route contracts
+        run: |
+          node scripts/check-rust-crate-boundaries.mjs
+          TT_NODE_PLUGIN_RUNTIME="$RUNNER_TEMP/node-plugin-runtime" node --test tests/node-plugin-*.test.mjs

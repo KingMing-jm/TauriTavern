@@ -9,6 +9,7 @@ pub mod host_resource;
 pub mod lan_discovery;
 pub mod lan_sync;
 pub mod mcp;
+pub mod node_plugins;
 pub mod repositories;
 pub mod runtime_paths;
 pub mod settings;

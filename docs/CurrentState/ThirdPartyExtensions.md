@@ -163,7 +163,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 
 ## 5. 当前明确不支持或不承诺的内容
 
-- 不支持 SillyTavern 的 Node-only backend plugins
+- 桌面验证分支提供显式配置的 Node 后端插件实验宿主，首个为柏宝库存储/向量子集；完整 ST 服务端模块与移动端仍不支持，见 [NodeBackendPlugins](NodeBackendPlugins.md)
 - 不提供通用“前端伪静态服务器”或任意文件读取能力
 - 不支持 private auth、SSH、credential helper、Git hook/external filter/LFS/submodule执行或递归 clone
 - 不支持 gitfile/linked worktree、外部 common dir、外部 `core.worktree` 等非本地 Git 布局；管理操作会 fail-fast 并要求重新安装，不自动修复或读取 stale JSON fallback

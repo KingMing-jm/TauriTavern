@@ -28,6 +28,7 @@ use tt_application::services::image_metadata_service::ImageMetadataService;
 use tt_application::services::lan_sync_service::LanSyncService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
+use tt_application::services::node_plugin_service::NodePluginService;
 use tt_application::services::preset_service::PresetService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::provider_metadata_service::ProviderMetadataService;
@@ -92,6 +93,7 @@ pub(crate) struct AppServices {
     pub(crate) content_service: Arc<ContentService>,
     pub(crate) asset_service: Arc<AssetService>,
     pub(crate) extension_service: Arc<ExtensionService>,
+    pub(crate) node_plugin_service: Arc<NodePluginService>,
     pub(crate) extension_store_service: Arc<ExtensionStoreService>,
     pub(crate) avatar_service: Arc<AvatarService>,
     pub(crate) group_service: Arc<GroupService>,

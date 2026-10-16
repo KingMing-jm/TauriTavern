@@ -9247,6 +9247,7 @@ dependencies = [
  "tracing",
  "tt-adapter-http",
  "tt-adapter-storage-core",
+ "tt-contracts",
  "tt-domain",
  "tt-ports",
  "url",

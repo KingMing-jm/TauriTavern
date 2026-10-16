@@ -56,6 +56,7 @@ function safePerfMeasure(name, startMark, endMark) {
 }
 
 const DEV_SW_PROXY_ALLOWED_PATH_PREFIXES = [
+    '/api/plugins/',
     '/css/user.css',
     '/thumbnail',
     '/scripts/extensions/third-party/',
