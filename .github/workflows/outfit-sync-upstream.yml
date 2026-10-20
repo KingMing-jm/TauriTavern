@@ -86,10 +86,12 @@ jobs:
         run: |
           set -euo pipefail
           node --test scripts/outfit/*.test.mjs
-          node scripts/outfit/prepare.mjs
-          node scripts/outfit/smoke.mjs
           node scripts/check-rust-crate-boundaries.mjs
           pnpm run check
+          # Keep native-only bundled extensions out of the Web Host test fixture.
+          node scripts/outfit/prepare.mjs
+          node scripts/outfit/smoke.mjs
+          node --experimental-vm-modules scripts/outfit/baibai-smoke.mjs
           # Validation prepares generated assets; publish only the committed candidate.
           git restore --worktree -- .
       - name: Publish both branches and trigger all platform builds
