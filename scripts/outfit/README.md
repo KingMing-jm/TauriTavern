@@ -39,7 +39,7 @@ Export application archives and Outfit data before changing installations. Exist
 
 The default branch owns `.github/workflows/outfit-sync-upstream.yml`. GitHub checks `Darkatse/TauriTavern:dev` every 30 minutes, at minutes 17 and 47 UTC, and supports manual **Run workflow**. Scheduled execution may be delayed by GitHub.
 
-On a new upstream commit, the workflow prepares merges into both `main` and `feat/outfit-manager-bundled`, retaining fork commits. It regenerates the full packaging workflow, updates the recorded upstream revision, runs native/plugin smoke checks and `pnpm run check`, then pushes both candidates atomically. The existing Outfit push workflow builds all platforms. Unchanged upstream commits cause no push or build.
+On a new upstream commit, the workflow prepares merges into both `main` and `feat/outfit-manager-bundled`, retaining fork commits. It regenerates the full packaging workflow, updates the recorded upstream revision, runs `pnpm run check` on the source checkout, then prepares and smoke-tests the bundled Outfit and BaiBai integrations before pushing both candidates atomically. The Web Host fixture loads discovered extensions, so native-only bundles are generated after its tests. The existing Outfit push workflow builds all platforms. Unchanged upstream commits cause no push or build.
 
 Conflicts, failed generation/checks or concurrent user pushes stop the operation. No force push or automatic conflict resolution is used, and neither remote branch is updated by a rejected atomic push. The Actions log and job summary report failures; GitHub notifications follow your account's Actions notification settings.
 

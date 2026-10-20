@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import { createBrowserRuntime } from '../../tests/browser/runtime.mjs';
 
 const frontend = fileURLToPath(new URL('../../src/', import.meta.url));
-const runtime = createBrowserRuntime();
+const runtime = await createBrowserRuntime();
 const { window, load, getModule, startHost } = runtime;
 try {
     // The real host/router/modules run; native IO uses the existing browser fixture.
