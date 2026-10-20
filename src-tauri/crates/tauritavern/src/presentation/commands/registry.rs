@@ -11,8 +11,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::character_commands::create_character_with_avatar,
         super::character_commands::update_character,
         super::character_commands::update_character_card_data,
-        super::character_commands::check_character_lorebook_conflict,
-        super::character_commands::resolve_character_lorebook_conflict,
+        super::character_commands::adopt_character_lorebook,
+        super::character_commands::resolve_character_lorebook_adoption,
         super::character_commands::merge_character_card_data,
         super::character_commands::bulk_merge_character_card_data,
         super::character_commands::delete_character,
@@ -400,9 +400,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::update_commands::check_for_update,
         // Bridge commands
         super::bridge::emit_event,
-        super::bridge::get_version,
         super::bridge::get_client_version,
-        super::bridge::is_ready,
         #[cfg(any(dev, debug_assertions))]
         super::bridge::read_dev_web_resource,
         super::resource_bridge_commands::read_frontend_template,
