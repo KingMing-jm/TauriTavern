@@ -27,7 +27,7 @@
 
 页面脚本运行前，宿主已写入 `window.__TAURITAVERN_HOST__`（见 2.2）。
 
-开发态 HTTP 入口会先由 `scripts/tauri-dev-server.mjs` 注入 `src/dev-sw-bootstrap.js`，仅负责让持久 Service Worker registration 与当前 WebView 会话重新绑定，不参与应用模块初始化。
+开发态资源桥的就绪契约见 2.2，安装与接管机制见[第三方扩展](CurrentState/ThirdPartyExtensions.md)。
 
 1. `src/init.js`：负责最早期的环境标记、可选 perf 开关与动态 import。
 2. `src/tauri-main.js`：薄入口，仅调用 `bootstrapTauriMain()`。
@@ -36,17 +36,21 @@
 
 ### 2.2 就绪信号（Public/Project）
 
+- `window.__TAURITAVERN_DEV_SW_READY__ : Promise<void> | undefined`（Project）
+  - 开发资源桥引导脚本在安装资源桥时同步发布；SW 接管页面后 resolve，注册失败则 reject。
+  - 以下情况不发布，应用照常启动：打包运行（没有注入）；移动端 dev（经 app 协议加载，资源由宿主提供）；WebView 不支持 SW（会警告开发资源不可用）；旧会话正在注销并重载。
+  - `init.js` 在导入 `lib.js` 前等待它。
 - `window.__TAURITAVERN_MAIN_READY__ : Promise<void>`
-  - 由 `src/tauri/main/bootstrap.js` 写入，表示宿主层初始化已完成（或失败已被捕获并写入 console）。
-  - 在 Tauri runtime 下，resolve 前必须完成 Rust `BackendReadiness` 等待，确保首批依赖 `AppState` 的命令不靠 “state not managed” 文本重试作为正常控制流。
+  - 由 `src/tauri/main/bootstrap.js` 在主应用模块加载前同步写入；初始化成功时 resolve，失败时 reject，由调用者传播失败。
+  - resolve 前必须完成 Rust `BackendReadiness` 等待，确保首批依赖 `AppState` 的命令不靠 “state not managed” 文本重试作为正常控制流。
 - `window.__TAURITAVERN_PERF_READY__ : Promise<unknown> | undefined`
   - 仅在 perf-hud 启用时存在（见第 5 节）。
 - `globalThis.__TAURITAVERN_PERF_ENABLED__ : boolean`
   - 由 `src/init.js` 在动态 import 前写入；`bootstrap` 会优先读取它（避免重复计算/时序差异）。
 - `window.__TAURI_RUNNING__ : true`
-  - 由 `src/init.js` 写入；用于桥接层尽早判断 Tauri 环境（避免移动端注入时序 race）。
+  - 由 `src/init.js` 写入，作为 TT 前端的对外识别标记；内部代码不读取它，新代码使用 `__TAURITAVERN__` 提供的 API。
 - `window.__TAURITAVERN_HOST__ : { platform, kind }`（Project）
-  - 宿主身份：Rust 按编译目标生成，在页面脚本之前写入主 WebView 的顶层 frame，对象冻结。
+  - 宿主身份：宿主在页面脚本运行前写入 TT 页面的 `window`，对象冻结。原生应用中由 Rust 按编译目标生成。
   - `platform`：`'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'ohos'`；`kind`：`'desktop' | 'mobile'`，与 Rust 的 `desktop` / `mobile` 编译条件同源。
   - 第一方代码只通过 `src/scripts/util/host-identity.js` 读取，见 `docs/FrontendGuide.md` §2.1。
 
@@ -117,9 +121,13 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
   - `api.layout`：读取与订阅已排除原生遮挡的内容视口，见 [API/Layout.md](API/Layout.md)。
   - `api.chat`：TauriTavern 独有的聊天/记忆类扩展 API（聊天摘要、元数据、历史分页、稳定存储、后端定位、纯文本检索）。
     - 详细签名与示例见：`docs/API/Chat.md`。
-  - `api.characterCards`：用原生选择器选择本地角色卡（`json/png`），返回标准 `File[]`，交给上游的导入或替换流程。
+  - `api.characterCards`：选择角色卡文件，以及接管卡内的世界书。
     - `isNativePickerAvailable()`：所有宿主都为 `true`。
-    - `pickFiles(options?: { multiple?: boolean }) -> Promise<File[] | null>`：支持多选；取消返回 `null`，失败抛错。
+    - `pickFiles(options?: { multiple?: boolean }) -> Promise<File[] | null>`：选择 `json/png` 角色卡，返回标准 `File[]`；支持多选；取消返回 `null`，失败抛错。
+    - Project，第一方使用，参数为头像文件名：
+      - `adoptLorebook(avatar)`：按角色当前的绑定，接管卡内世界书。
+      - `resolveLorebookAdoption(avatar, choice, token)`：提交 `adopt` 或 `update`。决定已过期时，以 `LorebookAdoptionConflictError` 拒绝。
+      - 两个方法都返回 `TauriTavernCharacterLorebookAdoption`（`src/types.d.ts`），失败时拒绝。规则见[角色世界书](CurrentState/CharacterIdentityContract.md#10-角色世界书)。
   - `api.extension.store`：扩展级**全局持久化**（不绑定 chat），提供 KV JSON + Blob，支持多 table 与 Blob 流式读取。
     - 签名、读写边界与示例见 [Extension Store API](API/Extension.md)。
   - `api.db`：本地向量、JSON、文本索引、图和 TQL 数据库。`open` 异步等待可用；NodeId 为整数；签名、索引恢复边界与共享关闭语义见 [Database API](API/Database.md)。
@@ -191,7 +199,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 > 注意：`window.__TAURITAVERN__` 是“平台 ABI”，应保持**小而稳定**；不要把内部实现对象整个暴露出去。
 
-### 3.7 ChatSurface participant（Project Contract）
+### 3.7 ChatSurface（Project Contract）
 
 - `window.__TAURITAVERN__.api.chatSurface`
   - 当前是实验性的 Project Contract，尚未作为 Public Contract 稳定发布。
@@ -200,6 +208,10 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
   - participant 必须显式声明协议版本；hook 返回同步 disposer，宿主用 `AbortSignal` 表达 mount/content/runtime 三种真实寿命。
   - mount/remount/content lifecycle 不得伪装为 SillyTavern 消息业务事件。
   - 完整协议与 raw API 接入示例见 `docs/API/ChatSurface.md`。
+
+- `SillyTavern.getContext().scrollChatSurfaceTo(options: ScrollToOptions): void`
+  - TT 在上游 `src/scripts/st-context.js` 中增加的函数，属于 Project Contract，目前供第一方助手使用。
+  - 效果等同于对主页面 `#chat` 调用 `scrollTo(options)`。`#chat` 的原生滚动只由 ChatSurface 写入，所以要经由它，不直接操作 DOM。
 
 ---
 
@@ -214,7 +226,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 拦截生效条件（见 `src/tauri/main/bootstrap.js`）：
 
-- 仅在 **Tauri 环境**启用（`bootstrapTauriMain()` 早退保护）。
+- 由宿主启动链路安装；`bootstrapTauriMain()` 只防止重复安装。
 - 仅拦截 **same-origin** 请求（包含被 patch 的同源 iframe/window）。
 - 是否接管由 `router.canHandle(method, pathname)` 决定（仅看 `url.pathname`）。
 
@@ -228,6 +240,10 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 ### 4.3 路由表（Public）
 
 路由位于 `src/tauri/main/routes/*`；公共契约覆盖上游兼容及生态实际依赖的接口。
+
+`/api/characters/import` 的响应比上游多一个 `lorebook` 字段，形状与 `api.characterCards` 相同。角色已经写入、但世界书接管失败时，`lorebook.status` 为 `failed`，错误由后端提示。
+
+`/api/characters/delete` 只删除角色和请求删除的聊天，不删除世界书。界面删卡时如何清理世界书，见[角色世界书](CurrentState/CharacterIdentityContract.md#10-角色世界书)。
 
 第一方聊天读写直连内部 transport，不产生兼容路由的 Fetch 请求；外部观察应使用既有业务事件。`/api/chats/get`、`/api/chats/group/get`、`/api/chats/save`、`/api/chats/group/save` 仍供扩展调用。保存成功为 `200 { ok: true }`；integrity 冲突按错误码识别，返回 `400 { error: 'integrity' }`。
 
@@ -248,7 +264,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 - `/api/*`：应用核心 API（settings/chats/characters/ai/worldinfo…）
   - 用户设定沿用上游 settings 数据形状；列表刷新不写入资料，单项保存失败不影响其他修改。
-  - `/api/settings/save` 接收完整 JSON。读取与保存确认返回 `tauritavern_settings_revision`；调用方将其作为不透明令牌，以 JSON 编码经 `X-TauriTavern-Settings-Revision` 回传。过期令牌返回 409，未携带时仍可覆盖保存。Persona 修改独立确认成败。
+  - `/api/settings/save` 接收设置 JSON：Persona 注册表按 ID 增量提交，提及的 ID 替换整条记录，未提及的不删除；其余设置是完整快照。读取与保存确认返回 `tauritavern_settings_revision`；调用方将其作为不透明令牌，以 JSON 编码经 `X-TauriTavern-Settings-Revision` 回传。过期令牌返回 409，未携带时仍可覆盖保存。Persona 修改独立确认成败。
   - `/api/settings/get` 保持上游响应形状，`settings` 仍为 JSON 字符串；启动读取与应用顺序见 [StartupOptimization §4](CurrentState/StartupOptimization.md#4-设置与-bootstrap-元数据读取)。
 - `/api/backends/chat-completions/generate` 的流式响应由 Rust 进程内会话持有生成任务、移动端 best-effort 后台执行租约与未确认事件；前端通过单调递增的 `after_seq` 消费并确认，WebView 暂停后可在同一 Rust 进程内重放缺失事件。单次读取失败会使用相同 cursor 重试一次，第二次失败才关闭会话。后台租约失败或到期不拥有生成终止权；该保证不跨进程重启，也不伪装成上游 provider 的 HTTP 断点续传。
 - `/css/user.css`：用户自定义 CSS 覆盖文件（数据目录 `_css/user.css`）

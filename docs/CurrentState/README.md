@@ -18,7 +18,7 @@
 | [数据目录](DataDirectorySelection.md) | 桌面目录选择与迁移 |
 | [原生模型 API](NativeApiFormats.md) | Responses、Claude、Gemini 等格式 |
 | [iOS 策略](iOSPolicy.md) | 平台能力与分发设置 |
-| [角色身份](CharacterIdentityContract.md) | 角色、聊天目录与重命名 |
+| [角色身份](CharacterIdentityContract.md) | 角色、聊天目录、重命名与世界书绑定 |
 | [日志](LoggingObservability.md) | tracing、Dev API 与 LLM 请求日志 |
 | [资源缓存](HostResourceCaching.md) | 资源版本与条件请求 |
 | [更新渠道](UpdateChannels.md) | Stable、Canary 与更新检测 |
@@ -27,3 +27,4 @@
 | [MCP](MCP.md) | 服务器、工具目录与模型调用 |
 | [向量 API](VectorApi.md) | 索引、embedding 与查询 |
 | [自有界面](FirstPartyUI.md) | React、TypeScript 与构建流程 |
+| [Web Host](WebHost.md) | 浏览器嵌入方（Tavern Studio）使用的宿主实现 |
