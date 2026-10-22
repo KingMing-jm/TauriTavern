@@ -5,7 +5,7 @@
   "mainBinaryName": "tauritavern-lucky",
   "identifier": "com.kingming.tauritavern.outfit",
   "upstream": {
-    "tauritavern": "c12c75904b95a4d01650b90009ab5db0bed2fbe5",
+    "tauritavern": "8ed6c627f07e8f277d5d538b272e5c6bf923f558",
     "frontend": {
       "repository": "wenshui012/Outfit-Manager",
       "revision": "e2a98eaf5bc860029d41e82b6a65a7c8f4f09a6d"
