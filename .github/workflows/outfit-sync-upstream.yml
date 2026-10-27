@@ -81,6 +81,9 @@ jobs:
         if: steps.merge.outputs.feature_changed == 'true'
         with:
           version: latest-known
+      - name: Install the performance baseline browser
+        if: steps.merge.outputs.feature_changed == 'true'
+        run: pnpm exec playwright-core install --with-deps --only-shell chromium
       - name: Verify bundled Outfit and complete application checks
         if: steps.merge.outputs.feature_changed == 'true'
         run: |
