@@ -41,7 +41,9 @@ function prepareAfterInstall(job) {
     job.steps.splice(index + 1, 0, structuredClone(prep));
 }
 function common(job) {
+    // Fork artifacts depend on validation, independently of upstream release publication.
     job.needs = 'contracts';
+    delete job.if;
     delete job.env;
     delete job.concurrency;
     delete job['continue-on-error'];

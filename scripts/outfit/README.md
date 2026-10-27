@@ -23,6 +23,8 @@ Export application archives and Outfit data before changing installations. Exist
 
 `.github/workflows/outfit-macos.yml` keeps its historical filename but now runs **TauriTavern-Lucky - All Upstream Targets**, on every push to this feature branch or manual dispatch. Build jobs are derived from upstream stable/canary/OpenHarmony workflows, including their matrices, toolchains, dependencies and build commands:
 
+Every artifact build is gated by the local `contracts` job. Upstream release-publication conditions are removed because this workflow uploads build artifacts without publishing an upstream Release.
+
 | Target | Packages |
 | --- | --- |
 | Windows x64 | NSIS, MSI, debug NSIS with devtools, portable executable |

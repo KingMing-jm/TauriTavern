@@ -443,7 +443,6 @@ jobs:
       TAURITAVERN_FLATPAK_USER: "1"
   nix:
     needs: contracts
-    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
